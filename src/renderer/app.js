@@ -5,11 +5,15 @@ let countdownInterval = null;
 let latestUsageData = null;
 let isExpanded = false;
 let isCompactMode = false;
+let _settingsOpenedFromCompact = false;
 let usageChart = null;
 let graphVisible = false;
 let graphWasVisible = false; // preserves graph state across compact mode toggle
 let appInitializing = true;  // suppresses _saveViewState during startup restore
 let isFetching = false;       // in-flight guard — prevents overlapping fetchUsageData calls
+let allAccountsVisible = false;
+let allAccountsData = null;
+window._lastAccountMeta = { accounts: [], activeAccountId: null };
 const UPDATE_INTERVAL = 5 * 60 * 1000; // 5 minutes
 const WIDGET_HEIGHT_COLLAPSED = 155;
 const WIDGET_ROW_HEIGHT = 30;
@@ -99,7 +103,19 @@ const elements = {
     compactWeeklyFill: document.getElementById('compactWeeklyFill'),
     compactWeeklyPct: document.getElementById('compactWeeklyPct'),
     compactSettingsOverlay: document.getElementById('compactSettingsOverlay'),
-    closeCompactSettingsBtn: document.getElementById('closeCompactSettingsBtn')
+    closeCompactSettingsBtn: document.getElementById('closeCompactSettingsBtn'),
+
+    // All-accounts view
+    allAccountsBtn: document.getElementById('allAccountsBtn'),
+    multiAccountSection: document.getElementById('multiAccountSection'),
+
+    // Accounts management
+    addAccountBtn: document.getElementById('addAccountBtn'),
+    accountsList: document.getElementById('accountsList'),
+    nameAccountForm: document.getElementById('nameAccountForm'),
+    newAccountLabel: document.getElementById('newAccountLabel'),
+    saveNewAccountBtn: document.getElementById('saveNewAccountBtn'),
+    cancelNewAccountBtn: document.getElementById('cancelNewAccountBtn')
 };
 
 // Populate organization selector dropdown
@@ -130,6 +146,226 @@ function populateOrgSelector(organizations, selectedOrgId) {
     } else {
         // Single org - hide selector column
         elements.orgSelectorCol.style.display = 'none';
+    }
+}
+
+// ── Accounts ─────────────────────────────────────────────────────────────────
+
+function fmtResetTime(iso) {
+    if (!iso) return '—';
+    const diff = new Date(iso) - new Date();
+    if (diff <= 0) return 'resetting';
+    const h = Math.floor(diff / 3600000);
+    const m = Math.floor((diff % 3600000) / 60000);
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+function acctBarClass(pct) {
+    return pct >= dangerThreshold ? 'danger' : pct >= warnThreshold ? 'warning' : '';
+}
+
+function resetAddBtn() {
+    if (!elements.addAccountBtn) return;
+    elements.addAccountBtn.disabled = false;
+    elements.addAccountBtn.textContent = '+ Add';
+}
+
+let _acctErrTimer = null;
+function showAccountError(msg) {
+    if (!elements.accountsList) return;
+    let err = document.getElementById('accountsError');
+    if (!err) {
+        err = document.createElement('div');
+        err.id = 'accountsError';
+        err.className = 'accounts-error';
+        elements.accountsList.parentNode.insertBefore(err, elements.accountsList.nextSibling);
+    }
+    err.textContent = msg;
+    err.style.display = 'block';
+    clearTimeout(_acctErrTimer);
+    _acctErrTimer = setTimeout(() => { err.style.display = 'none'; }, 3000);
+}
+
+async function loadAccounts() {
+    if (!elements.accountsList) return;
+    const meta = await window.electronAPI.getAccounts();
+    window._lastAccountMeta = meta;
+    renderAccounts(meta.accounts, meta.activeAccountId);
+    const multi = meta.accounts.length > 1;
+    if (elements.allAccountsBtn) elements.allAccountsBtn.style.display = multi ? 'flex' : 'none';
+    const nameEl = document.getElementById('activeAccountName');
+    if (nameEl) {
+        const active = meta.accounts.find(a => a.id === meta.activeAccountId);
+        nameEl.textContent = multi && active ? active.label : '';
+    }
+}
+
+function renderAccounts(accounts, activeAccountId) {
+    if (!elements.accountsList) return;
+    elements.accountsList.innerHTML = '';
+    accounts.forEach(acc => {
+        const isActive = acc.id === activeAccountId;
+        const item = document.createElement('div');
+        item.className = 'account-item' + (isActive ? ' active' : '');
+
+        const dot = document.createElement('span');
+        dot.className = 'account-dot';
+        const labelEl = document.createElement('span');
+        labelEl.className = 'account-label';
+        labelEl.title = acc.label;
+        labelEl.textContent = acc.label;
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'account-delete-btn';
+        deleteBtn.title = 'Remove';
+        deleteBtn.textContent = '×';
+
+        item.appendChild(dot);
+        item.appendChild(labelEl);
+
+        if (isActive) {
+            const badge = document.createElement('span');
+            badge.className = 'account-active-badge';
+            badge.textContent = 'active';
+            item.appendChild(badge);
+        } else {
+            const switchBtn = document.createElement('button');
+            switchBtn.className = 'account-switch-btn';
+            switchBtn.dataset.id = acc.id;
+            switchBtn.textContent = 'Switch';
+            switchBtn.addEventListener('click', async () => {
+                const result = await window.electronAPI.switchAccount(acc.id);
+                if (result.success) {
+                    // Refresh full credentials so sessionKey stays in sync with main process
+                    credentials = await window.electronAPI.getCredentials();
+                    await loadAccounts();
+                    // If all-accounts panel is open, re-render it with updated activeAccountId
+                    // so the newly-active account moves out of the panel immediately
+                    if (allAccountsVisible && allAccountsData) {
+                        renderAllAccounts(allAccountsData, window._lastAccountMeta);
+                        resizeWidget();
+                    }
+                    // Don't fetch here — settings overlay is open and a fetch can
+                    // trigger resizes or close the overlay on auth errors.
+                    // Data refreshes immediately when settings closes.
+                    window._refreshOnSettingsClose = true;
+                } else {
+                    showAccountError('Switch failed — session may have expired');
+                }
+            });
+            item.appendChild(switchBtn);
+        }
+
+        if (!isActive) {
+            item.appendChild(deleteBtn);
+            deleteBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const result = await window.electronAPI.deleteAccount(acc.id);
+                if (result.ok) {
+                    await loadAccounts();
+                } else {
+                    showAccountError(result.reason === 'last'
+                        ? "Can't delete your only account"
+                        : "Can't delete this account");
+                }
+            });
+        }
+
+        elements.accountsList.appendChild(item);
+    });
+}
+
+// ── All-accounts view ────────────────────────────────────────────────────────
+
+async function refreshAllAccountsData() {
+    if (!allAccountsVisible || !elements.multiAccountSection) return;
+    try {
+        const [data, meta] = await Promise.all([
+            window.electronAPI.fetchAllAccountsData(),
+            window.electronAPI.getAccounts()
+        ]);
+        allAccountsData = data;
+        window._lastAccountMeta = meta;
+        renderAllAccounts(data, meta);
+    } catch (e) {
+        console.warn('[accounts] refresh failed, keeping previous data', e);
+    }
+    resizeWidget();
+}
+
+async function toggleAllAccounts() {
+    if (!elements.multiAccountSection) return;
+    allAccountsVisible = !allAccountsVisible;
+    elements.allAccountsBtn.classList.toggle('active', allAccountsVisible);
+
+    if (!allAccountsVisible) {
+        elements.multiAccountSection.style.display = 'none';
+        resizeWidget();
+        return;
+    }
+
+    elements.multiAccountSection.innerHTML = '<div class="multi-account-loading">Fetching all accounts…</div>';
+    elements.multiAccountSection.style.display = 'block';
+    resizeWidget();
+
+    try {
+        const [data, meta] = await Promise.all([
+            window.electronAPI.fetchAllAccountsData(),
+            window.electronAPI.getAccounts()
+        ]);
+        allAccountsData = data;
+        window._lastAccountMeta = meta;
+        renderAllAccounts(data, meta);
+    } catch (e) {
+        elements.multiAccountSection.innerHTML = '<div class="multi-account-loading">Failed to load</div>';
+    }
+    resizeWidget();
+}
+
+function renderAllAccounts(results, meta) {
+    if (!elements.multiAccountSection) return;
+    const { activeAccountId } = meta || window._lastAccountMeta;
+
+    elements.multiAccountSection.innerHTML = '';
+
+    for (const [id, result] of Object.entries(results)) {
+        if (id === activeAccountId) continue;
+        const block = document.createElement('div');
+        block.className = 'multi-account-block';
+
+        const labelEl = document.createElement('div');
+        labelEl.className = 'multi-account-label';
+        labelEl.textContent = result.label;
+        block.appendChild(labelEl);
+
+        if (result.error) {
+            const errEl = document.createElement('div');
+            errEl.className = 'multi-account-error';
+            errEl.textContent = result.error.includes('no key') || result.error.includes('decrypt')
+                ? 'Session key missing'
+                : 'Session expired — switch to re-authenticate';
+            block.appendChild(errEl);
+        } else {
+            const d = result.data;
+            const sessionPct = Math.min(Math.round(d?.five_hour?.utilization || 0), 100);
+            const weeklyPct  = Math.min(Math.round(d?.seven_day?.utilization || 0), 100);
+
+            const makeRow = (rowLabel, pct, resetsAt, extraClass) => {
+                const row = document.createElement('div');
+                row.className = 'multi-account-row';
+                row.innerHTML = `
+                    <span class="multi-account-row-label">${rowLabel}</span>
+                    <div class="multi-account-bar-bg">
+                        <div class="multi-account-bar-fill${extraClass ? ' ' + extraClass : ''} ${acctBarClass(pct)}" style="width:${pct}%"></div>
+                    </div>
+                    <span class="multi-account-pct">${pct}%</span>
+                    <span class="multi-account-time">${fmtResetTime(resetsAt)}</span>`;
+                return row;
+            };
+
+            block.appendChild(makeRow('Session', sessionPct, d?.five_hour?.resets_at, ''));
+            block.appendChild(makeRow('Weekly',  weeklyPct,  d?.seven_day?.resets_at,  'weekly'));
+        }
+        elements.multiAccountSection.appendChild(block);
     }
 }
 
@@ -195,6 +431,7 @@ async function init() {
         showMainContent();
         await fetchUsageData();
         startAutoUpdate();
+        loadAccounts();
     } else {
         showLoginRequired();
     }
@@ -247,6 +484,7 @@ function setupEventListeners() {
         debugLog('Refresh button clicked');
         elements.refreshBtn.classList.add('spinning');
         await fetchUsageData();
+        if (allAccountsVisible) await refreshAllAccountsData();
         elements.refreshBtn.classList.remove('spinning');
     });
 
@@ -300,8 +538,22 @@ function setupEventListeners() {
     elements.closeSettingsBtn.addEventListener('click', async () => {
         await saveSettings();
         elements.settingsOverlay.style.display = 'none';
-        if (!isCompactMode) resizeWidget();
+        if (_settingsOpenedFromCompact) {
+            _settingsOpenedFromCompact = false;
+            if (isCompactMode) {
+                window.electronAPI.setCompactMode(true);
+            } else {
+                resizeWidget();
+            }
+        } else if (!isCompactMode) {
+            resizeWidget();
+        }
         startAutoUpdate();
+        if (window._refreshOnSettingsClose) {
+            window._refreshOnSettingsClose = false;
+            await fetchUsageData();
+            if (allAccountsVisible) refreshAllAccountsData();
+        }
     });
 
     elements.logoutBtn.addEventListener('click', async () => {
@@ -387,18 +639,65 @@ function setupEventListeners() {
     // Organization selector — change triggers immediate save and refresh
     elements.orgSelector.addEventListener('change', handleOrgChange);
 
-    // Settings button — open compact settings if in compact mode, full settings otherwise
+    // Settings button — always open full settings; if in compact mode, temporarily expand the window first
     elements.settingsBtn.addEventListener('click', async () => {
         stopAutoUpdate();
         if (isCompactMode) {
-            elements.compactModeToggleCompact.checked = isCompactMode;
-            elements.compactSettingsOverlay.style.display = 'flex';
-        } else {
-            await loadSettings();
-            elements.settingsOverlay.style.display = 'flex';
-            window.electronAPI.resizeWindow(318); // Increased from 288 for org selector row
+            _settingsOpenedFromCompact = true;
+            window.electronAPI.setCompactMode(false);
         }
+        await loadSettings();
+        await loadAccounts();
+        elements.settingsOverlay.style.display = 'flex';
+        window.electronAPI.resizeWindow(440);
     });
+
+    // ── All-accounts toggle ───────────────────────────────────────────────────
+    if (elements.allAccountsBtn) {
+        elements.allAccountsBtn.addEventListener('click', toggleAllAccounts);
+    }
+
+    // ── Accounts ──────────────────────────────────────────────────────────────
+    let pendingNewAccount = null;
+
+    if (elements.addAccountBtn) {
+        elements.addAccountBtn.addEventListener('click', async () => {
+            elements.addAccountBtn.disabled = true;
+            elements.addAccountBtn.textContent = 'Logging in…';
+            try {
+                const result = await window.electronAPI.detectSessionKey();
+                if (!result.success) { resetAddBtn(); return; }
+                const validation = await window.electronAPI.validateSessionKey(result.sessionKey);
+                if (!validation.success) { resetAddBtn(); return; }
+                pendingNewAccount = { sessionKey: result.sessionKey, organizationId: validation.organizationId };
+                elements.newAccountLabel.value = '';
+                elements.nameAccountForm.style.display = 'flex';
+                resetAddBtn();
+                elements.newAccountLabel.focus();
+            } catch (e) {
+                resetAddBtn();
+            }
+        });
+    }
+
+    if (elements.saveNewAccountBtn) {
+        elements.saveNewAccountBtn.addEventListener('click', async () => {
+            if (!pendingNewAccount) return;
+            const label = elements.newAccountLabel.value.trim() || 'Account';
+            const id = 'acc_' + Date.now();
+            await window.electronAPI.saveAccount({ id, label, sessionKey: pendingNewAccount.sessionKey, organizationId: pendingNewAccount.organizationId });
+            pendingNewAccount = null;
+            elements.nameAccountForm.style.display = 'none';
+            await loadAccounts();
+        });
+    }
+
+    if (elements.cancelNewAccountBtn) {
+        elements.cancelNewAccountBtn.addEventListener('click', () => {
+            pendingNewAccount = null;
+            elements.nameAccountForm.style.display = 'none';
+        });
+    }
 
     // Close compact settings — apply compact toggle value then close
     elements.closeCompactSettingsBtn.addEventListener('click', async () => {
@@ -537,10 +836,11 @@ function formatCurrency(amountCents, currencyCode) {
 
 // Extra row label mapping for API fields
 const EXTRA_ROW_CONFIG = {
-    seven_day_sonnet: { label: 'Sonnet (7d)', color: 'weekly' },
+    seven_day_sonnet: { label: 'Sonnet (7d)', color: 'sonnet' },
     seven_day_opus: { label: 'Opus (7d)', color: 'opus' },
-    seven_day_cowork: { label: 'Cowork (7d)', color: 'weekly' },
-    seven_day_oauth_apps: { label: 'OAuth Apps (7d)', color: 'weekly' },
+    seven_day_cowork: { label: 'Cowork (7d)', color: 'cowork' },
+    seven_day_omelette: { label: 'Design (7d)', color: 'design' },
+    seven_day_oauth_apps: { label: 'OAuth Apps (7d)', color: 'oauth' },
     extra_usage: { label: 'Extra Usage', color: 'extra' },
 };
 
@@ -697,6 +997,10 @@ function buildExtraRows(data) {
 
             const resetsText = document.createElement('span');
             resetsText.className = 'resets-at-text';
+            if (resetsAt) {
+                const settings = window._cachedSettings || {};
+                resetsText.textContent = formatResetsAt(resetsAt, true, settings.timeFormat || '12h', settings.weeklyDateFormat || 'date');
+            }
             row.appendChild(resetsText);
         }
 
@@ -733,6 +1037,7 @@ const BANNER_HEIGHT = 28;
 const EXPAND_OVERHEAD = 28; // margin-top(12) + padding-top(6) + bottom buffer(10)
 
 function resizeWidget(bannerVisible) {
+    if (elements.settingsOverlay && elements.settingsOverlay.style.display !== 'none') return;
     const hasBanner = bannerVisible !== undefined
         ? bannerVisible
         : elements.updateBanner.style.display !== 'none';
@@ -742,12 +1047,20 @@ function resizeWidget(bannerVisible) {
         ? EXPAND_OVERHEAD + (extraCount * WIDGET_ROW_HEIGHT)
         : 0;
     const graphOffset = graphVisible ? GRAPH_HEIGHT : 0;
-    const totalHeight = WIDGET_HEIGHT_COLLAPSED + expandedOffset + graphOffset + bannerOffset;
+    const multiAcctBlocks = elements.multiAccountSection
+        ? elements.multiAccountSection.querySelectorAll('.multi-account-block').length : 0;
+    const multiAcctOffset = allAccountsVisible
+        ? (multiAcctBlocks > 0 ? multiAcctBlocks * 72 + 12 : 28) : 0;
+    const totalHeight = WIDGET_HEIGHT_COLLAPSED + expandedOffset + graphOffset + bannerOffset + multiAcctOffset;
     window.electronAPI.resizeWindow(totalHeight);
 }
 
+function normalizeUsageData(data) {
+    return data;
+}
+
 function updateUI(data) {
-    latestUsageData = data;
+    latestUsageData = normalizeUsageData(data);
 
     showMainContent();
     buildExtraRows(data);
@@ -1051,7 +1364,7 @@ function startCountdown() {
     countdownInterval = setInterval(() => {
         refreshTimers();
         if (isExpanded) refreshExtraTimers();
-    }, 1000);
+    }, 30000);
 }
 
 // Update progress bar
@@ -1224,6 +1537,7 @@ function startAutoUpdate() {
     updateInterval = setInterval(async () => {
         if (elements.refreshBtn) elements.refreshBtn.classList.add('spinning');
         await fetchUsageData();
+        if (allAccountsVisible) await refreshAllAccountsData();
         if (elements.refreshBtn) elements.refreshBtn.classList.remove('spinning');
     }, intervalSecs * 1000);
 }
@@ -1245,10 +1559,18 @@ function renderChart(history) {
     if (usageChart) usageChart.destroy();
 
     const showSonnet = isExpanded && !!latestUsageData?.seven_day_sonnet;
+    const showOpus = isExpanded && !!latestUsageData?.seven_day_opus;
+    const showCowork = isExpanded && !!latestUsageData?.seven_day_cowork;
+    const showDesign = isExpanded && !!latestUsageData?.seven_day_omelette;
+    const showOAuthApps = isExpanded && !!latestUsageData?.seven_day_oauth_apps;
     const showExtraUsage = isExpanded && !!latestUsageData?.extra_usage;
     const allValues = history.flatMap((entry) => {
         const values = [entry.session, entry.weekly];
         if (showSonnet) values.push(entry.sonnet || 0);
+        if (showOpus) values.push(entry.opus || 0);
+        if (showCowork) values.push(entry.cowork || 0);
+        if (showDesign) values.push(entry.design || 0);
+        if (showOAuthApps) values.push(entry.oauthApps || 0);
         if (showExtraUsage) values.push(entry.extraUsage || 0);
         return values;
     });
@@ -1257,7 +1579,7 @@ function renderChart(history) {
     const datasets = [
         {
             label: 'Session',
-            data: history.map((entry) => entry.session),
+            data: history.map((entry) => ({ x: entry.timestamp, y: entry.session })),
             borderColor: '#8b5cf6',
             backgroundColor: 'transparent',
             borderWidth: 2,
@@ -1268,7 +1590,7 @@ function renderChart(history) {
         },
         {
             label: 'Weekly',
-            data: history.map((entry) => entry.weekly),
+            data: history.map((entry) => ({ x: entry.timestamp, y: entry.weekly })),
             borderColor: '#3b82f6',
             backgroundColor: 'transparent',
             borderWidth: 2,
@@ -1283,15 +1605,83 @@ function renderChart(history) {
         const sonnetData = history.map((entry) => entry.sonnet || 0);
         if (sonnetData.some((value) => value > 0)) {
             datasets.push({
-            label: 'Sonnet',
-            data: sonnetData,
-            borderColor: '#10b981',
-            backgroundColor: 'transparent',
-            borderWidth: 2,
-            stepped: true,
-            pointRadius: 0,
-            pointHoverRadius: 3,
-            pointHitRadius: 10
+                label: 'Sonnet',
+                data: history.map((entry) => ({ x: entry.timestamp, y: entry.sonnet || 0 })),
+                borderColor: '#f43f5e',
+                backgroundColor: 'transparent',
+                borderWidth: 2,
+                stepped: true,
+                pointRadius: 0,
+                pointHoverRadius: 3,
+                pointHitRadius: 10
+            });
+        }
+    }
+
+    if (showOpus) {
+        const opusData = history.map((entry) => entry.opus || 0);
+        if (opusData.some((value) => value > 0)) {
+            datasets.push({
+                label: 'Opus',
+                data: history.map((entry) => ({ x: entry.timestamp, y: entry.opus || 0 })),
+                borderColor: '#f59e0b',
+                backgroundColor: 'transparent',
+                borderWidth: 2,
+                stepped: true,
+                pointRadius: 0,
+                pointHoverRadius: 3,
+                pointHitRadius: 10
+            });
+        }
+    }
+
+    if (showCowork) {
+        const coworkData = history.map((entry) => entry.cowork || 0);
+        if (coworkData.some((value) => value > 0)) {
+            datasets.push({
+                label: 'Cowork',
+                data: history.map((entry) => ({ x: entry.timestamp, y: entry.cowork || 0 })),
+                borderColor: '#06b6d4',
+                backgroundColor: 'transparent',
+                borderWidth: 2,
+                stepped: true,
+                pointRadius: 0,
+                pointHoverRadius: 3,
+                pointHitRadius: 10
+            });
+        }
+    }
+
+    if (showDesign) {
+        const designData = history.map((entry) => entry.design || 0);
+        if (designData.some((value) => value > 0)) {
+            datasets.push({
+                label: 'Design',
+                data: history.map((entry) => ({ x: entry.timestamp, y: entry.design || 0 })),
+                borderColor: '#92400e',
+                backgroundColor: 'transparent',
+                borderWidth: 2,
+                stepped: true,
+                pointRadius: 0,
+                pointHoverRadius: 3,
+                pointHitRadius: 10
+            });
+        }
+    }
+
+    if (showOAuthApps) {
+        const oauthAppsData = history.map((entry) => entry.oauthApps || 0);
+        if (oauthAppsData.some((value) => value > 0)) {
+            datasets.push({
+                label: 'OAuth Apps',
+                data: history.map((entry) => ({ x: entry.timestamp, y: entry.oauthApps || 0 })),
+                borderColor: '#f97316',
+                backgroundColor: 'transparent',
+                borderWidth: 2,
+                stepped: true,
+                pointRadius: 0,
+                pointHoverRadius: 3,
+                pointHitRadius: 10
             });
         }
     }
@@ -1301,7 +1691,7 @@ function renderChart(history) {
         if (extraUsageData.some((value) => value > 0)) {
             datasets.push({
             label: 'Extra Usage',
-            data: extraUsageData,
+            data: history.map((entry) => ({ x: entry.timestamp, y: entry.extraUsage || 0 })),
             borderColor: '#f59e0b',
             backgroundColor: 'transparent',
             borderWidth: 2,
@@ -1313,12 +1703,12 @@ function renderChart(history) {
         }
     }
 
+    const firstDayMidnight = new Date(history[0].timestamp);
+    firstDayMidnight.setHours(0, 0, 0, 0);
+
     usageChart = new Chart(elements.usageChart.getContext('2d'), {
         type: 'line',
-        data: {
-            labels: history.map((entry) => entry.timestamp),
-            datasets
-        },
+        data: { datasets },
         options: {
             animation: false,
             responsive: true,
@@ -1329,17 +1719,31 @@ function renderChart(history) {
             },
             scales: {
                 x: {
-                    offset: true,
+                    type: 'linear',
+                    min: firstDayMidnight.getTime(),
+                    max: history[history.length - 1].timestamp,
+                    afterBuildTicks(axis) {
+                        const end = history[history.length - 1].timestamp;
+                        const d = new Date(firstDayMidnight.getTime());
+                        const ticks = [];
+                        while (d.getTime() <= end) {
+                            ticks.push({ value: d.getTime() });
+                            d.setDate(d.getDate() + 1);
+                        }
+                        axis.ticks = ticks;
+                    },
                     ticks: {
-                        autoSkip: false,
                         maxRotation: 0,
                         minRotation: 0,
                         font: {
                             size: 10
                         },
-                        callback(value, index) {
+                        callback(value) {
                             const tf = (window._cachedSettings || {}).timeFormat || '12h';
-                            return formatXAxisTick(history, index, tf);
+                            const spanMs = history.length > 1
+                                ? history[history.length - 1].timestamp - history[0].timestamp
+                                : 0;
+                            return formatTimestampTick(value, spanMs, tf);
                         }
                     },
                     grid: {
@@ -1367,8 +1771,7 @@ function renderChart(history) {
                 tooltip: {
                     callbacks: {
                         title(items) {
-                            const point = history[items[0].dataIndex];
-                            return new Date(point.timestamp).toLocaleString([], {
+                            return new Date(items[0].parsed.x).toLocaleString([], {
                                 month: 'short',
                                 day: 'numeric',
                                 hour: 'numeric',
@@ -1385,68 +1788,17 @@ function renderChart(history) {
     });
 }
 
-function formatXAxisTick(history, index, timeFormat) {
-    const tickIndexes = getXAxisTickIndexes(history.length);
-    if (!tickIndexes.has(index)) {
-        return '';
-    }
-
-    const timestamp = history[index]?.timestamp;
-    if (!timestamp) {
-        return '';
-    }
-
-    const spanMs = Math.max(0, history[history.length - 1].timestamp - history[0].timestamp);
+function formatTimestampTick(timestamp, spanMs, timeFormat) {
     const date = new Date(timestamp);
     const hour12 = (timeFormat || '12h') !== '24h';
 
     if (spanMs < 12 * 60 * 60 * 1000) {
-        return date.toLocaleTimeString([], {
-            hour: 'numeric',
-            minute: '2-digit',
-            hour12
-        });
+        return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12 });
     }
-
     if (spanMs < 48 * 60 * 60 * 1000) {
-        return date.toLocaleString([], {
-            weekday: 'short',
-            hour: 'numeric',
-            hour12
-        });
+        return date.toLocaleString([], { weekday: 'short', hour: 'numeric', hour12 });
     }
-
-    return date.toLocaleDateString([], {
-        month: 'short',
-        day: 'numeric'
-    });
-}
-
-function getXAxisTickIndexes(length) {
-    const indexes = new Set();
-    if (length <= 0) {
-        return indexes;
-    }
-
-    indexes.add(0);
-    if (length === 1) {
-        return indexes;
-    }
-
-    const targetTickCount = Math.min(5, length);
-    const lastIndex = length - 1;
-    indexes.add(lastIndex);
-
-    if (targetTickCount <= 2) {
-        return indexes;
-    }
-
-    const interval = lastIndex / (targetTickCount - 1);
-    for (let i = 1; i < targetTickCount - 1; i += 1) {
-        indexes.add(Math.round(interval * i));
-    }
-
-    return indexes;
+    return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
 // Add spinning animation for refresh button

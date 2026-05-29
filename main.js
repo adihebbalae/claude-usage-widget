@@ -58,19 +58,33 @@ let weeklyTray = null;   // Tray icon for Weekly usage
 
 const WIDGET_WIDTH = process.platform === 'darwin' ? 590 : 560;
 const WIDGET_HEIGHT = 155;
-const HISTORY_RETENTION_DAYS = 30;
+const HISTORY_RETENTION_DAYS = 8;
 const CHART_DAYS = 7;
 const MAX_HISTORY_SAMPLES = 10000; // Cap total samples to prevent unbounded growth
 
 function storeUsageHistory(data) {
+  // Skip write if the session is invalid — a live session always has resets_at timestamps.
+  // Absent timestamps mean the API returned empty/zeroed data (dead session, removed device, etc.)
+  if (!data.five_hour?.resets_at && !data.seven_day?.resets_at) {
+    debugLog('[History] Skipping write — no reset timestamps, likely invalid session data');
+    return;
+  }
+
+  const organizationId = store.get('organizationId');
+  const historyKey = organizationId ? `usageHistory_${organizationId}` : 'usageHistory';
+
   const timestamp = Date.now();
-  let history = store.get('usageHistory', []);
+  let history = store.get(historyKey, []);
 
   history.push({
     timestamp,
     session: data.five_hour?.utilization || 0,
     weekly: data.seven_day?.utilization || 0,
     sonnet: data.seven_day_sonnet?.utilization || 0,
+    opus: data.seven_day_opus?.utilization || 0,
+    cowork: data.seven_day_cowork?.utilization || 0,
+    design: data.seven_day_omelette?.utilization || 0,
+    oauthApps: data.seven_day_oauth_apps?.utilization || 0,
     extraUsage: data.extra_usage?.utilization || 0
   });
 
@@ -78,12 +92,45 @@ function storeUsageHistory(data) {
   const cutoff = timestamp - (HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000);
   history = history.filter((entry) => entry.timestamp > cutoff);
 
-  // If still over limit, drop oldest samples
   if (history.length > MAX_HISTORY_SAMPLES) {
     history = history.slice(history.length - MAX_HISTORY_SAMPLES);
   }
 
-  store.set('usageHistory', history);
+  store.set(historyKey, history);
+}
+
+// Migrate legacy single-key history to the per-org namespaced key at startup,
+// so get-usage-history reads from the right place before any fetch has run.
+function migrateUsageHistoryKey() {
+  const organizationId = store.get('organizationId');
+  if (!organizationId) return;
+  const historyKey = `usageHistory_${organizationId}`;
+  if (store.has(historyKey)) return;
+  const legacy = store.get('usageHistory', []);
+  if (legacy.length > 0) {
+    store.set(historyKey, legacy);
+    store.delete('usageHistory');
+    debugLog('[History] Migrated legacy usageHistory →', historyKey);
+  }
+}
+
+// Prune all per-org history keys at startup. Trims entries older than the retention
+// window and deletes the key entirely if nothing remains — cleans up abandoned accounts.
+function pruneStaleHistoryKeys() {
+  const cutoff = Date.now() - (HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  const allKeys = Object.keys(store.store);
+  for (const key of allKeys) {
+    if (!key.startsWith('usageHistory_') && key !== 'usageHistory') continue;
+    const history = store.get(key, []);
+    const fresh = history.filter((entry) => entry.timestamp > cutoff);
+    if (fresh.length === 0) {
+      store.delete(key);
+      debugLog('[History] Deleted stale key:', key);
+    } else if (fresh.length < history.length) {
+      store.set(key, fresh);
+      debugLog('[History] Pruned', history.length - fresh.length, 'old entries from', key);
+    }
+  }
 }
 
 // Set session-level User-Agent to avoid Electron detection
@@ -750,21 +797,10 @@ function updateTrayIcon(usageData) {
 
 // IPC Handlers
 ipcMain.handle('get-credentials', () => {
-  let sessionKey = null;
-  // Try safeStorage first (OS keychain)
-  if (safeStorage.isEncryptionAvailable()) {
-    const encrypted = store.get('sessionKey_encrypted');
-    if (encrypted) {
-      try {
-        sessionKey = safeStorage.decryptString(Buffer.from(encrypted, 'base64'));
-      } catch (err) {
-        console.error('[Keychain] Failed to decrypt session key:', err.message);
-      }
-    }
-  } else {
-    // Fallback: plain storage (legacy or safeStorage unavailable)
-    sessionKey = store.get('sessionKey');
-  }
+  const rawEncrypted = safeStorage.isEncryptionAvailable()
+    ? store.get('sessionKey_encrypted')
+    : null;
+  const sessionKey = rawEncrypted ? decryptKey(rawEncrypted) : store.get('sessionKey');
   return {
     sessionKey,
     organizationId: store.get('organizationId')
@@ -921,7 +957,9 @@ ipcMain.handle('get-app-version', () => {
 });
 
 ipcMain.handle('get-usage-history', () => {
-  const history = store.get('usageHistory', []);
+  const organizationId = store.get('organizationId');
+  const historyKey = organizationId ? `usageHistory_${organizationId}` : 'usageHistory';
+  const history = store.get(historyKey, []);
   const cutoff = Date.now() - (CHART_DAYS * 24 * 60 * 60 * 1000);
   return history
     .filter((entry) => entry.timestamp > cutoff)
@@ -1088,9 +1126,17 @@ ipcMain.handle('detect-session-key', async () => {
       loginWin.setTitle(`Claude Login - ${url}`);
     });
 
-    // Security: block popup windows from login page
-    loginWin.webContents.setWindowOpenHandler(() => {
-      console.warn('[Security] Blocked popup window attempt from login page');
+    // Allow OAuth popups (Google, Apple, Microsoft sign-in all open a popup window).
+    // Only allow popups to trusted OAuth provider domains; block everything else.
+    loginWin.webContents.setWindowOpenHandler(({ url }) => {
+      try {
+        const hostname = new URL(url).hostname;
+        const isAllowed = allowedLoginDomains.some(domain =>
+          hostname === domain || hostname.endsWith('.' + domain)
+        );
+        if (isAllowed) return { action: 'allow' };
+      } catch {}
+      console.warn('[Security] Blocked popup window attempt from login page:', url);
       return { action: 'deny' };
     });
 
@@ -1163,8 +1209,6 @@ ipcMain.handle('check-for-update', () => {
 
 function isNewerVersion(remote, local) {
   try {
-    // Parse version strings with optional pre-release tags
-    // Examples: "1.7.1", "1.7.2-rc.1", "2.0.0-beta.3"
     const parseVersion = (ver) => {
       const [mainVer, preRelease] = ver.split('-');
       const parts = mainVer.split('.').map(Number);
@@ -1179,37 +1223,26 @@ function isNewerVersion(remote, local) {
     const r = parseVersion(remote);
     const l = parseVersion(local);
 
+    // Never notify about pre-release versions (rc, beta, alpha, etc.)
+    if (r.preRelease !== null) return false;
+
     // Compare major.minor.patch
     if (r.major !== l.major) return r.major > l.major;
     if (r.minor !== l.minor) return r.minor > l.minor;
     if (r.patch !== l.patch) return r.patch > l.patch;
 
-    // If versions are equal, check pre-release tags
-    // A version WITHOUT pre-release is NEWER than one WITH pre-release
-    // Examples: 1.7.2 > 1.7.2-rc.1, 1.7.2 > 1.7.2-beta.1
-    if (r.preRelease === null && l.preRelease !== null) return true;   // remote is stable, local is pre-release
-    if (r.preRelease !== null && l.preRelease === null) return false;  // remote is pre-release, local is stable
-
-    // Both have same version and both stable (or both pre-release) - not newer
-    return false;
+    // Same version numbers — notify if local is a pre-release and remote is stable
+    // e.g. local=1.7.5-rc.1, remote=1.7.5 → user should be told stable is out
+    return l.preRelease !== null;
   } catch { return false; }
 }
 
 ipcMain.handle('fetch-usage-data', async (event, options = {}) => {
-  // Use the same credential retrieval logic as get-credentials
-  let sessionKey = null;
-  if (safeStorage.isEncryptionAvailable()) {
-    const encrypted = store.get('sessionKey_encrypted');
-    if (encrypted) {
-      try {
-        sessionKey = safeStorage.decryptString(Buffer.from(encrypted, 'base64'));
-      } catch (err) {
-        console.error('[Keychain] Failed to decrypt session key:', err.message);
-      }
-    }
-  } else {
-    sessionKey = store.get('sessionKey');
-  }
+  // Use decryptKey so plain-text keys (saved before encryption was available) still work
+  const rawEncrypted = safeStorage.isEncryptionAvailable()
+    ? store.get('sessionKey_encrypted')
+    : null;
+  const sessionKey = rawEncrypted ? decryptKey(rawEncrypted) : store.get('sessionKey');
 
   const organizationId = store.get('organizationId');
 
@@ -1351,26 +1384,151 @@ ipcMain.handle('fetch-usage-data', async (event, options = {}) => {
   return data;
 });
 
+// ── Multiple accounts ──────────────────────────────────────────────────────
+
+function encryptKey(key) {
+  if (safeStorage.isEncryptionAvailable()) return safeStorage.encryptString(key).toString('base64');
+  return key;
+}
+
+function decryptKey(enc) {
+  if (!enc) return null;
+  if (safeStorage.isEncryptionAvailable()) {
+    try { return safeStorage.decryptString(Buffer.from(enc, 'base64')); }
+    catch {
+      // Key was stored as plain text (saved before encryption was available) — return as-is
+      return enc;
+    }
+  }
+  return enc;
+}
+
+async function clearClaudeCookies() {
+  const cookies = await session.defaultSession.cookies.get({ url: 'https://claude.ai' });
+  for (const c of cookies) await session.defaultSession.cookies.remove('https://claude.ai', c.name);
+}
+
+const ORG_ID_RE = /^[a-f0-9-]{8,36}$/i;
+let fetchAllInFlight = false;
+
+ipcMain.handle('get-accounts', () => {
+  const accounts = store.get('accounts', []);
+  return {
+    accounts: accounts.map(a => ({ id: a.id, label: a.label, organizationId: a.organizationId })),
+    activeAccountId: store.get('activeAccountId', null)
+  };
+});
+
+ipcMain.handle('save-account', async (event, { id, label, sessionKey, organizationId }) => {
+  if (typeof id !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(id)) return false;
+  if (typeof label !== 'string' || label.length > 100) return false;
+  if (organizationId != null && (typeof organizationId !== 'string' || !ORG_ID_RE.test(organizationId))) return false;
+
+  const accounts = store.get('accounts', []);
+  const idx = accounts.findIndex(a => a.id === id);
+  const encryptedSessionKey = sessionKey ? encryptKey(sessionKey)
+    : (idx >= 0 ? accounts[idx].encryptedSessionKey : null);
+  const account = { id, label, encryptedSessionKey, organizationId };
+  if (idx >= 0) { accounts[idx] = account; } else { accounts.push(account); }
+  store.set('accounts', accounts);
+  return true;
+});
+
+ipcMain.handle('delete-account', async (event, id) => {
+  if (typeof id !== 'string' || !id) return { ok: false, reason: 'invalid' };
+  const accounts = store.get('accounts', []);
+  if (accounts.length <= 1) return { ok: false, reason: 'last' };
+  if (store.get('activeAccountId') === id) return { ok: false, reason: 'active' };
+  store.set('accounts', accounts.filter(a => a.id !== id));
+  return { ok: true };
+});
+
+ipcMain.handle('switch-account', async (event, id) => {
+  if (typeof id !== 'string' || !id) return { success: false, error: 'Invalid id' };
+  const accounts = store.get('accounts', []);
+  const account = accounts.find(a => a.id === id);
+  if (!account) return { success: false, error: 'Account not found' };
+  const sessionKey = decryptKey(account.encryptedSessionKey);
+  if (!sessionKey) return { success: false, error: 'Cannot decrypt session key' };
+
+  await clearClaudeCookies();
+  await setSessionCookie(sessionKey);
+
+  store.set('activeAccountId', id);
+  store.set('organizationId', account.organizationId);
+  if (safeStorage.isEncryptionAvailable()) {
+    store.set('sessionKey_encrypted', account.encryptedSessionKey);
+    store.delete('sessionKey');
+  } else {
+    store.set('sessionKey', sessionKey);
+  }
+  return { success: true, organizationId: account.organizationId };
+});
+
+// Fetch usage data for every saved account sequentially, restoring the active
+// account's session afterwards. Returns { [accountId]: { label, data } | { label, error } }.
+ipcMain.handle('fetch-all-accounts-data', async () => {
+  if (fetchAllInFlight) return {};
+  fetchAllInFlight = true;
+
+  const accounts = store.get('accounts', []);
+  const activeId = store.get('activeAccountId');
+  const results = {};
+
+  try {
+    for (const account of accounts) {
+      const mk = (error) => { results[account.id] = { label: account.label, error }; };
+      const sessionKey = decryptKey(account.encryptedSessionKey);
+      if (!sessionKey) { mk('no key'); continue; }
+      const orgId = account.organizationId;
+      if (!orgId || !ORG_ID_RE.test(orgId)) { mk('invalid org'); continue; }
+
+      await clearClaudeCookies();
+      await setSessionCookie(sessionKey);
+
+      try {
+        const [usageData] = await fetchMultipleViaWindow([`https://claude.ai/api/organizations/${orgId}/usage`]);
+        results[account.id] = { label: account.label, data: usageData };
+      } catch (e) {
+        mk(e.message);
+      }
+    }
+  } finally {
+    const active = accounts.find(a => a.id === activeId);
+    if (active) {
+      const sk = decryptKey(active.encryptedSessionKey);
+      if (sk) { await clearClaudeCookies(); await setSessionCookie(sk); }
+    }
+    fetchAllInFlight = false;
+  }
+
+  return results;
+});
+
 // App lifecycle
 app.whenReady().then(async () => {
   // Restore session cookie if we have stored credentials
-  let sessionKey = null;
-  if (safeStorage.isEncryptionAvailable()) {
-    const encrypted = store.get('sessionKey_encrypted');
-    if (encrypted) {
-      try {
-        sessionKey = safeStorage.decryptString(Buffer.from(encrypted, 'base64'));
-      } catch (err) {
-        console.error('[Keychain] Failed to decrypt session key on startup:', err.message);
-      }
-    }
-  } else {
-    sessionKey = store.get('sessionKey');
-  }
+  const rawEncrypted = safeStorage.isEncryptionAvailable()
+    ? store.get('sessionKey_encrypted')
+    : null;
+  const sessionKey = rawEncrypted ? decryptKey(rawEncrypted) : store.get('sessionKey');
 
   if (sessionKey) {
     await setSessionCookie(sessionKey);
+
+    // Migrate existing single-account session to the accounts array on first run
+    if (store.get('accounts', []).length === 0 && store.get('organizationId')) {
+      const orgId = store.get('organizationId');
+      if (orgId && sessionKey) {
+        const encryptedSessionKey = store.get('sessionKey_encrypted') || encryptKey(sessionKey);
+        store.set('accounts', [{ id: 'acc_default', label: 'Account 1', encryptedSessionKey, organizationId: orgId }]);
+        store.set('activeAccountId', 'acc_default');
+      }
+    }
   }
+
+  migrateUsageHistoryKey();
+  pruneStaleHistoryKeys();
 
   createMainWindow();
   // Avoid creating temporary tray icons during startup when tray stats are disabled.

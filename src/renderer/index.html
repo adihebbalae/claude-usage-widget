@@ -27,6 +27,12 @@
                     <span>Claude Usage</span>
                 </div>
                 <div class="controls">
+                    <button class="control-btn all-accounts-btn" id="allAccountsBtn" title="Show all accounts" style="display:none;">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/>
+                            <path d="M16 3.13a4 4 0 0 1 0 7.75"/><path d="M21 21v-2a4 4 0 0 0-3-3.87"/>
+                        </svg>
+                    </button>
                     <button class="control-btn settings-btn" id="settingsBtn" title="Settings">⚙️</button>
                     <button class="control-btn refresh-btn" id="refreshBtn" title="Refresh">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -123,7 +129,7 @@
 
                 <!-- Column Headers -->
                 <div class="usage-headers">
-                    <span></span>
+                    <span id="activeAccountName" class="active-account-name"></span>
                     <span class="col-header col-header-center">Session Used</span>
                     <span class="col-header col-header-center">Elapsed</span>
                     <span class="col-header col-header-center">Resets In</span>
@@ -186,6 +192,8 @@
                     <canvas id="usageChart"></canvas>
                 </div>
 
+                <!-- Multi-account section: shown when "all accounts" is toggled -->
+                <div id="multiAccountSection" style="display:none;"></div>
 
             </div>
 
@@ -259,15 +267,15 @@
                                 </label>
                             </div>
                             <div class="settings-col">
-                                <span class="settings-row-label">Usage Alerts</span>
+                                <span class="settings-row-label">Show tray stats</span>
                                 <label class="toggle-switch">
-                                    <input type="checkbox" id="usageAlertsToggle">
+                                    <input type="checkbox" id="showTrayStatsToggle">
                                     <span class="toggle-slider"></span>
                                 </label>
                             </div>
                         </div>
 
-                        <!-- Row 3: compact mode -->
+                        <!-- Row 3: compact mode + usage alerts -->
                         <div class="settings-row-2col">
                             <div class="settings-col">
                                 <span class="settings-row-label">Compact mode</span>
@@ -277,11 +285,15 @@
                                 </label>
                             </div>
                             <div class="settings-col">
-                                <!-- Organization selector placeholder -->
+                                <span class="settings-row-label">Usage Alerts</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="usageAlertsToggle">
+                                    <span class="toggle-slider"></span>
+                                </label>
                             </div>
                         </div>
 
-                        <!-- Row 3: theme + show tray stats -->
+                        <!-- Row 4: theme + organization selector -->
                         <div class="settings-row-2col">
                             <div class="settings-col">
                                 <span class="settings-row-label">Theme</span>
@@ -291,12 +303,12 @@
                                     <button class="theme-btn" data-theme="system">System</button>
                                 </div>
                             </div>
-                            <div class="settings-col">
-                                <span class="settings-row-label">Show tray stats</span>
-                                <label class="toggle-switch">
-                                    <input type="checkbox" id="showTrayStatsToggle">
-                                    <span class="toggle-slider"></span>
-                                </label>
+                            <div class="settings-col" id="orgSelectorCol" style="display: none;">
+                                <span class="settings-row-label">Organization</span>
+                                <select id="orgSelector" class="settings-select">
+                                    <option value="org1">My Org (Personal)</option>
+                                    <option value="org2">Acme Corp (Team)</option>
+                                </select>
                             </div>
                         </div>
 
@@ -348,18 +360,19 @@
                             </div>
                         </div>
 
-                        <!-- Row 7: organization selector (when available) -->
-                        <div class="settings-row-2col">
-                            <div class="settings-col" id="orgSelectorCol" style="display: none;">
-                                <span class="settings-row-label">Organization</span>
-                                <select id="orgSelector" class="settings-select">
-                                    <option value="org1">My Org (Personal)</option>
-                                    <option value="org2">Acme Corp (Team)</option>
-                                </select>
-                            </div>
-                            <div class="settings-col">
-                                <!-- placeholder -->
-                            </div>
+                    </div>
+
+                    <!-- Accounts section -->
+                    <div class="accounts-section">
+                        <div class="accounts-header">
+                            <span class="accounts-title">Accounts</span>
+                            <button class="add-account-btn" id="addAccountBtn">+ Add</button>
+                        </div>
+                        <div id="accountsList" class="accounts-list"></div>
+                        <div id="nameAccountForm" class="name-account-form" style="display:none;">
+                            <input type="text" id="newAccountLabel" class="account-label-input" placeholder="Label (e.g. Work)" maxlength="30">
+                            <button id="saveNewAccountBtn" class="save-account-btn">Save</button>
+                            <button id="cancelNewAccountBtn" class="cancel-account-btn">Cancel</button>
                         </div>
                     </div>
 
