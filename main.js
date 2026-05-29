@@ -1,4 +1,9 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, session, shell, Notification, safeStorage, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, session, shell, Notification, safeStorage, nativeImage, screen } = require('electron');
+const { execFile } = require('child_process');
+
+// Low-power optimizations: disable GPU/hardware acceleration and background animation throttling
+app.disableHardwareAcceleration();
+
 const path = require('path');
 const https = require('https');
 const Store = require('electron-store');
@@ -55,6 +60,7 @@ const CHROME_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit
 let mainWindow = null;
 let sessionTray = null;  // Tray icon for Session usage
 let weeklyTray = null;   // Tray icon for Weekly usage
+let desktopModeProcess = null; // persistent PS process for HWND_BOTTOM loop
 
 const WIDGET_WIDTH = process.platform === 'darwin' ? 590 : 560;
 const WIDGET_HEIGHT = 155;
@@ -119,7 +125,8 @@ function createMainWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      preload: path.join(__dirname, 'preload.js')
+      preload: path.join(__dirname, 'preload.js'),
+      backgroundThrottling: true
     }
   };
 
@@ -963,7 +970,8 @@ ipcMain.handle('get-settings', () => {
     refreshInterval: store.get('settings.refreshInterval', '300'),
     graphVisible: store.get('settings.graphVisible', false),
     expandedOpen: store.get('settings.expandedOpen', false),
-    showTrayStats: store.get('settings.showTrayStats', false)
+    showTrayStats: store.get('settings.showTrayStats', false),
+    desktopMode: store.get('settings.desktopMode', false)
   };
 });
 
@@ -1088,9 +1096,17 @@ ipcMain.handle('detect-session-key', async () => {
       loginWin.setTitle(`Claude Login - ${url}`);
     });
 
-    // Security: block popup windows from login page
-    loginWin.webContents.setWindowOpenHandler(() => {
-      console.warn('[Security] Blocked popup window attempt from login page');
+    // Allow OAuth popups (Google, Apple, Microsoft sign-in all open a popup window).
+    // Only allow popups to trusted OAuth provider domains; block everything else.
+    loginWin.webContents.setWindowOpenHandler(({ url }) => {
+      try {
+        const hostname = new URL(url).hostname;
+        const isAllowed = allowedLoginDomains.some(domain =>
+          hostname === domain || hostname.endsWith('.' + domain)
+        );
+        if (isAllowed) return { action: 'allow' };
+      } catch {}
+      console.warn('[Security] Blocked popup window attempt from login page:', url);
       return { action: 'deny' };
     });
 
@@ -1351,6 +1367,200 @@ ipcMain.handle('fetch-usage-data', async (event, options = {}) => {
   return data;
 });
 
+// Fetch usage data for every saved account sequentially, restoring the active
+// account's session afterwards. Returns { [accountId]: { label, data } | { label, error } }.
+ipcMain.handle('fetch-all-accounts-data', async () => {
+  const accounts = store.get('accounts', []);
+  const activeId = store.get('activeAccountId');
+  const results = {};
+
+  for (const account of accounts) {
+    const sessionKey = decryptKey(account.sessionKey_encrypted);
+    if (!sessionKey) { results[account.id] = { label: account.label, error: 'no key' }; continue; }
+
+    // Swap session to this account
+    const existing = await session.defaultSession.cookies.get({ url: 'https://claude.ai' });
+    for (const c of existing) await session.defaultSession.cookies.remove('https://claude.ai', c.name);
+    await setSessionCookie(sessionKey);
+
+    try {
+      const orgId = account.organizationId;
+      const [usageData] = await fetchMultipleViaWindow([`https://claude.ai/api/organizations/${orgId}/usage`]);
+      results[account.id] = { label: account.label, data: usageData };
+    } catch (e) {
+      results[account.id] = { label: account.label, error: e.message };
+    }
+  }
+
+  // Restore active account's session
+  const active = accounts.find(a => a.id === activeId);
+  if (active) {
+    const sk = decryptKey(active.sessionKey_encrypted);
+    if (sk) {
+      const existing = await session.defaultSession.cookies.get({ url: 'https://claude.ai' });
+      for (const c of existing) await session.defaultSession.cookies.remove('https://claude.ai', c.name);
+      await setSessionCookie(sk);
+    }
+  }
+
+  return results;
+});
+
+// ── Desktop widget mode (Windows: keep window behind all others) ──────────────
+// Spawns a long-running PowerShell loop that calls SetWindowPos(HWND_BOTTOM)
+// every 800ms. Because it's a single persistent process (not one per call) the
+// overhead is one ~20MB PS process with <0.1% CPU.
+function startDesktopModeProcess(hwnd) {
+  if (desktopModeProcess) return;
+  if (process.platform !== 'win32') return;
+  const script = [
+    `Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;`,
+    `public class W32{[DllImport("user32.dll")]public static extern bool SetWindowPos(IntPtr h,IntPtr i,int x,int y,int cx,int cy,uint f);}';`,
+    `while($true){[W32]::SetWindowPos([IntPtr]${hwnd},[IntPtr]1,0,0,0,0,3);Start-Sleep -Milliseconds 800}`
+  ].join('');
+  desktopModeProcess = execFile('powershell', [
+    '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', script
+  ]);
+  desktopModeProcess.on('error', () => { desktopModeProcess = null; });
+  desktopModeProcess.on('exit', () => { desktopModeProcess = null; });
+}
+
+function stopDesktopModeProcess() {
+  if (desktopModeProcess) {
+    desktopModeProcess.kill('SIGTERM');
+    desktopModeProcess = null;
+  }
+}
+
+ipcMain.handle('set-desktop-mode', (event, enable) => {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  store.set('settings.desktopMode', enable);
+
+  if (enable) {
+    // Disable always-on-top and hide from taskbar for true desktop widget feel
+    store.set('settings.alwaysOnTop', false);
+    mainWindow.setAlwaysOnTop(false);
+    mainWindow.setSkipTaskbar(true);
+    const hwndBuf = mainWindow.getNativeWindowHandle();
+    const hwnd = hwndBuf.readBigUInt64LE(0).toString();
+    startDesktopModeProcess(hwnd);
+  } else {
+    stopDesktopModeProcess();
+    mainWindow.setSkipTaskbar(store.get('settings.minimizeToTray', false));
+    const alwaysOnTop = store.get('settings.alwaysOnTop', true);
+    mainWindow.setAlwaysOnTop(alwaysOnTop, 'floating');
+  }
+  return true;
+});
+
+// ── Snap to corner ────────────────────────────────────────────────────────────
+ipcMain.handle('snap-to-corner', (event, corner) => {
+  if (!mainWindow) return false;
+  const { workArea } = screen.getPrimaryDisplay();
+  const bounds = mainWindow.getBounds();
+  const margin = 10;
+  let x, y;
+  switch (corner) {
+    case 'TL': x = workArea.x + margin;                              y = workArea.y + margin; break;
+    case 'TR': x = workArea.x + workArea.width - bounds.width - margin;  y = workArea.y + margin; break;
+    case 'BL': x = workArea.x + margin;                              y = workArea.y + workArea.height - bounds.height - margin; break;
+    case 'BR': x = workArea.x + workArea.width - bounds.width - margin;  y = workArea.y + workArea.height - bounds.height - margin; break;
+    default: return false;
+  }
+  mainWindow.setPosition(Math.round(x), Math.round(y));
+  store.set('windowPosition', { x: Math.round(x), y: Math.round(y) });
+  return true;
+});
+
+// ── Toggle always-on-top (pin front / pin back) ────────────────────────────
+ipcMain.handle('toggle-always-on-top', () => {
+  if (!mainWindow) return null;
+  const current = store.get('settings.alwaysOnTop', true);
+  const next = !current;
+  store.set('settings.alwaysOnTop', next);
+  mainWindow.setAlwaysOnTop(next, 'floating');
+
+  // On Windows, when turning off, send window to back of z-order once
+  if (!next && process.platform === 'win32') {
+    try {
+      const hwndBuf = mainWindow.getNativeWindowHandle();
+      const hwnd = hwndBuf.readBigUInt64LE(0).toString();
+      // HWND_BOTTOM=1, SWP_NOMOVE|SWP_NOSIZE=0x0003
+      execFile('powershell', [
+        '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command',
+        `Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class W32{[DllImport("user32.dll")]public static extern bool SetWindowPos(IntPtr h,IntPtr i,int x,int y,int cx,int cy,uint f);}';[W32]::SetWindowPos([IntPtr]${hwnd},[IntPtr]1,0,0,0,0,3)`
+      ], { timeout: 5000 }, () => {});
+    } catch (e) { /* ignore */ }
+  }
+
+  return next;
+});
+
+// ── Multiple accounts ──────────────────────────────────────────────────────
+
+function encryptKey(key) {
+  if (safeStorage.isEncryptionAvailable()) {
+    return safeStorage.encryptString(key).toString('base64');
+  }
+  return key;
+}
+
+function decryptKey(enc) {
+  if (safeStorage.isEncryptionAvailable()) {
+    try { return safeStorage.decryptString(Buffer.from(enc, 'base64')); }
+    catch (e) { return null; }
+  }
+  return enc;
+}
+
+ipcMain.handle('get-accounts', () => {
+  const accounts = store.get('accounts', []);
+  const activeId = store.get('activeAccountId', null);
+  return {
+    accounts: accounts.map(a => ({ id: a.id, label: a.label, organizationId: a.organizationId })),
+    activeAccountId: activeId
+  };
+});
+
+ipcMain.handle('save-account', async (event, { id, label, sessionKey, organizationId }) => {
+  const accounts = store.get('accounts', []);
+  const idx = accounts.findIndex(a => a.id === id);
+  const sessionKey_encrypted = sessionKey ? encryptKey(sessionKey) :
+    (idx >= 0 ? accounts[idx].sessionKey_encrypted : null);
+  const account = { id, label, sessionKey_encrypted, organizationId };
+  if (idx >= 0) { accounts[idx] = account; } else { accounts.push(account); }
+  store.set('accounts', accounts);
+  return true;
+});
+
+ipcMain.handle('delete-account', async (event, id) => {
+  store.set('accounts', store.get('accounts', []).filter(a => a.id !== id));
+  if (store.get('activeAccountId') === id) store.delete('activeAccountId');
+  return true;
+});
+
+ipcMain.handle('switch-account', async (event, id) => {
+  const accounts = store.get('accounts', []);
+  const account = accounts.find(a => a.id === id);
+  if (!account) return { success: false, error: 'Account not found' };
+  const sessionKey = decryptKey(account.sessionKey_encrypted);
+  if (!sessionKey) return { success: false, error: 'Cannot decrypt session key' };
+
+  const cookies = await session.defaultSession.cookies.get({ url: 'https://claude.ai' });
+  for (const c of cookies) await session.defaultSession.cookies.remove('https://claude.ai', c.name);
+  await setSessionCookie(sessionKey);
+
+  store.set('activeAccountId', id);
+  store.set('organizationId', account.organizationId);
+  if (safeStorage.isEncryptionAvailable()) {
+    store.set('sessionKey_encrypted', account.sessionKey_encrypted);
+    store.delete('sessionKey');
+  } else {
+    store.set('sessionKey', sessionKey);
+  }
+  return { success: true, organizationId: account.organizationId };
+});
+
 // App lifecycle
 app.whenReady().then(async () => {
   // Restore session cookie if we have stored credentials
@@ -1370,6 +1580,15 @@ app.whenReady().then(async () => {
 
   if (sessionKey) {
     await setSessionCookie(sessionKey);
+
+    // Migrate existing single-account session to the accounts array on first run
+    if (store.get('accounts', []).length === 0) {
+      const orgId = store.get('organizationId');
+      const sessionKey_encrypted = store.get('sessionKey_encrypted') || encryptKey(sessionKey);
+      const migrated = [{ id: 'acc_default', label: 'Account 1', sessionKey_encrypted, organizationId: orgId }];
+      store.set('accounts', migrated);
+      store.set('activeAccountId', 'acc_default');
+    }
   }
 
   createMainWindow();
@@ -1381,13 +1600,20 @@ app.whenReady().then(async () => {
   // Apply persisted settings
   const minimizeToTray = store.get('settings.minimizeToTray', false);
   const alwaysOnTop = store.get('settings.alwaysOnTop', true);
+  const desktopMode = store.get('settings.desktopMode', false);
   if (mainWindow) {
     if (process.platform === 'darwin') {
       if (minimizeToTray) app.dock.hide();
     } else {
-      if (minimizeToTray) mainWindow.setSkipTaskbar(true);
+      if (minimizeToTray || desktopMode) mainWindow.setSkipTaskbar(true);
     }
-    mainWindow.setAlwaysOnTop(alwaysOnTop, 'floating');
+    if (desktopMode) {
+      mainWindow.setAlwaysOnTop(false);
+      const hwnd = mainWindow.getNativeWindowHandle().readBigUInt64LE(0).toString();
+      startDesktopModeProcess(hwnd);
+    } else {
+      mainWindow.setAlwaysOnTop(alwaysOnTop, 'floating');
+    }
   }
 
   // Periodic always-on-top re-assertion to recover from z-order disruptions
@@ -1406,6 +1632,10 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     // Keep running in tray
   }
+});
+
+app.on('before-quit', () => {
+  stopDesktopModeProcess();
 });
 
 app.on('activate', () => {

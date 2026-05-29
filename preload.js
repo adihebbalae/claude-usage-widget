@@ -70,5 +70,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   showNotification: (title, body) => ipcRenderer.send('show-notification', { title, body }),
 
   // Compact mode
-  setCompactMode: (compact) => ipcRenderer.send('set-compact-mode', compact)
+  setCompactMode: (compact) => ipcRenderer.send('set-compact-mode', compact),
+
+  // Window positioning
+  snapToCorner: (corner) => ipcRenderer.invoke('snap-to-corner', corner),
+  toggleAlwaysOnTop: () => ipcRenderer.invoke('toggle-always-on-top'),
+  setDesktopMode: (enable) => ipcRenderer.invoke('set-desktop-mode', enable),
+
+  // Multiple accounts
+  getAccounts: () => ipcRenderer.invoke('get-accounts'),
+  saveAccount: (data) => ipcRenderer.invoke('save-account', data),
+  deleteAccount: (id) => ipcRenderer.invoke('delete-account', id),
+  switchAccount: (id) => ipcRenderer.invoke('switch-account', id),
+  fetchAllAccountsData: () => ipcRenderer.invoke('fetch-all-accounts-data')
 });

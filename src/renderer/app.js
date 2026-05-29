@@ -10,6 +10,8 @@ let graphVisible = false;
 let graphWasVisible = false; // preserves graph state across compact mode toggle
 let appInitializing = true;  // suppresses _saveViewState during startup restore
 let isFetching = false;       // in-flight guard — prevents overlapping fetchUsageData calls
+let allAccountsVisible = false;
+let allAccountsData = null;
 const UPDATE_INTERVAL = 5 * 60 * 1000; // 5 minutes
 const WIDGET_HEIGHT_COLLAPSED = 155;
 const WIDGET_ROW_HEIGHT = 30;
@@ -99,7 +101,24 @@ const elements = {
     compactWeeklyFill: document.getElementById('compactWeeklyFill'),
     compactWeeklyPct: document.getElementById('compactWeeklyPct'),
     compactSettingsOverlay: document.getElementById('compactSettingsOverlay'),
-    closeCompactSettingsBtn: document.getElementById('closeCompactSettingsBtn')
+    closeCompactSettingsBtn: document.getElementById('closeCompactSettingsBtn'),
+
+    // Pin button
+    pinBtn: document.getElementById('pinBtn'),
+    cornerSnapWrap: document.getElementById('cornerSnapWrap'),
+    cornerSnapToggle: document.getElementById('cornerSnapToggle'),
+    cornerSnapPopover: document.getElementById('cornerSnapPopover'),
+    desktopModeToggle: document.getElementById('desktopModeToggle'),
+    allAccountsBtn: document.getElementById('allAccountsBtn'),
+    multiAccountSection: document.getElementById('multiAccountSection'),
+
+    // Accounts
+    addAccountBtn: document.getElementById('addAccountBtn'),
+    accountsList: document.getElementById('accountsList'),
+    nameAccountForm: document.getElementById('nameAccountForm'),
+    newAccountLabel: document.getElementById('newAccountLabel'),
+    saveNewAccountBtn: document.getElementById('saveNewAccountBtn'),
+    cancelNewAccountBtn: document.getElementById('cancelNewAccountBtn')
 };
 
 // Populate organization selector dropdown
@@ -133,6 +152,143 @@ function populateOrgSelector(organizations, selectedOrgId) {
     }
 }
 
+// ── Pin button visual state ──────────────────────────────────────────────────
+function updatePinButton(isPinned) {
+    if (!elements.pinBtn) return;
+    elements.pinBtn.classList.toggle('pinned', isPinned);
+    elements.pinBtn.title = isPinned ? 'Pinned to front — click to send to back' : 'Sent to back — click to pin to front';
+}
+
+// ── Accounts ─────────────────────────────────────────────────────────────────
+async function loadAccounts() {
+    if (!elements.accountsList) return;
+    const { accounts, activeAccountId } = await window.electronAPI.getAccounts();
+    window._lastAccountMeta = { accounts, activeAccountId };
+    renderAccounts(accounts, activeAccountId);
+    await refreshAllAccountsVisibility();
+}
+
+function renderAccounts(accounts, activeAccountId) {
+    if (!elements.accountsList) return;
+    elements.accountsList.innerHTML = '';
+    accounts.forEach(acc => {
+        const isActive = acc.id === activeAccountId;
+        const item = document.createElement('div');
+        item.className = 'account-item' + (isActive ? ' active' : '');
+        item.innerHTML = `
+            <span class="account-dot"></span>
+            <span class="account-label" title="${acc.label}">${acc.label}</span>
+            ${isActive ? '<span style="font-size:9px;color:#a78bfa;font-weight:700">active</span>' :
+              `<button class="account-switch-btn" data-id="${acc.id}">Switch</button>`}
+            <button class="account-delete-btn" data-id="${acc.id}" title="Remove">×</button>
+        `;
+        item.querySelector('.account-delete-btn').addEventListener('click', async (e) => {
+            e.stopPropagation();
+            if (accounts.length <= 1) return; // don't delete last account
+            await window.electronAPI.deleteAccount(acc.id);
+            await loadAccounts();
+        });
+        const switchBtn = item.querySelector('.account-switch-btn');
+        if (switchBtn) {
+            switchBtn.addEventListener('click', async () => {
+                const result = await window.electronAPI.switchAccount(acc.id);
+                if (result.success) {
+                    credentials.organizationId = result.organizationId;
+                    await loadAccounts();
+                    await fetchUsageData();
+                }
+            });
+        }
+        elements.accountsList.appendChild(item);
+    });
+}
+
+// ── All-accounts view ────────────────────────────────────────────────────────
+async function refreshAllAccountsVisibility() {
+    if (!elements.allAccountsBtn) return;
+    const { accounts } = await window.electronAPI.getAccounts();
+    elements.allAccountsBtn.style.display = accounts.length > 1 ? 'flex' : 'none';
+}
+
+async function toggleAllAccounts() {
+    if (!elements.multiAccountSection) return;
+    allAccountsVisible = !allAccountsVisible;
+    elements.allAccountsBtn.classList.toggle('active', allAccountsVisible);
+
+    if (!allAccountsVisible) {
+        elements.multiAccountSection.style.display = 'none';
+        resizeWidget();
+        return;
+    }
+
+    elements.multiAccountSection.innerHTML = '<div class="multi-account-loading">Fetching all accounts…</div>';
+    elements.multiAccountSection.style.display = 'block';
+    resizeWidget();
+
+    try {
+        allAccountsData = await window.electronAPI.fetchAllAccountsData();
+        renderAllAccounts(allAccountsData);
+    } catch (e) {
+        elements.multiAccountSection.innerHTML = '<div class="multi-account-loading">Failed to load</div>';
+    }
+    resizeWidget();
+}
+
+function renderAllAccounts(results) {
+    if (!elements.multiAccountSection) return;
+    const { accounts, activeAccountId } = window._lastAccountMeta || { accounts: [], activeAccountId: null };
+
+    elements.multiAccountSection.innerHTML = '';
+    const activeId = activeAccountId;
+
+    for (const [id, result] of Object.entries(results)) {
+        if (id === activeId) continue; // skip active account (already shown in main view)
+        const block = document.createElement('div');
+        block.className = 'multi-account-block';
+
+        if (result.error) {
+            block.innerHTML = `<div class="multi-account-label">${result.label}</div><div class="multi-account-error">Unavailable</div>`;
+        } else {
+            const d = result.data;
+            const sessionPct = Math.min(Math.round(d?.five_hour?.utilization || 0), 100);
+            const weeklyPct  = Math.min(Math.round(d?.seven_day?.utilization || 0), 100);
+            const sessionResetsAt = d?.five_hour?.resets_at;
+            const weeklyResetsAt  = d?.seven_day?.resets_at;
+
+            const fmtTime = (iso) => {
+                if (!iso) return '—';
+                const diff = new Date(iso) - new Date();
+                if (diff <= 0) return 'resetting';
+                const h = Math.floor(diff / 3600000);
+                const m = Math.floor((diff % 3600000) / 60000);
+                return h > 0 ? `${h}h ${m}m` : `${m}m`;
+            };
+
+            const barClass = (pct) => pct >= dangerThreshold ? 'danger' : pct >= warnThreshold ? 'warning' : '';
+
+            block.innerHTML = `
+                <div class="multi-account-label">${result.label}</div>
+                <div class="multi-account-row">
+                    <span class="multi-account-row-label">Session</span>
+                    <div class="multi-account-bar-bg">
+                        <div class="multi-account-bar-fill ${barClass(sessionPct)}" style="width:${sessionPct}%"></div>
+                    </div>
+                    <span class="multi-account-pct">${sessionPct}%</span>
+                    <span class="multi-account-time">${fmtTime(sessionResetsAt)}</span>
+                </div>
+                <div class="multi-account-row">
+                    <span class="multi-account-row-label">Weekly</span>
+                    <div class="multi-account-bar-bg">
+                        <div class="multi-account-bar-fill weekly ${barClass(weeklyPct)}" style="width:${weeklyPct}%"></div>
+                    </div>
+                    <span class="multi-account-pct">${weeklyPct}%</span>
+                    <span class="multi-account-time">${fmtTime(weeklyResetsAt)}</span>
+                </div>`;
+        }
+        elements.multiAccountSection.appendChild(block);
+    }
+}
+
 // Handle organization change
 async function handleOrgChange() {
     const newOrgId = elements.orgSelector.value;
@@ -158,6 +314,7 @@ async function init() {
     }
     warnThreshold = settings.warnThreshold;
     dangerThreshold = settings.dangerThreshold;
+    updatePinButton(settings.alwaysOnTop !== false);
 
     // Restore compact mode from saved settings
     if (settings.compactMode) {
@@ -195,6 +352,7 @@ async function init() {
         showMainContent();
         await fetchUsageData();
         startAutoUpdate();
+        refreshAllAccountsVisibility();
     } else {
         showLoginRequired();
     }
@@ -387,6 +545,92 @@ function setupEventListeners() {
     // Organization selector — change triggers immediate save and refresh
     elements.orgSelector.addEventListener('change', handleOrgChange);
 
+    // ── Desktop widget mode toggle ────────────────────────────────────────────
+    if (elements.desktopModeToggle) {
+        elements.desktopModeToggle.addEventListener('change', async () => {
+            await window.electronAPI.setDesktopMode(elements.desktopModeToggle.checked);
+        });
+    }
+
+    // ── All-accounts toggle ───────────────────────────────────────────────────
+    if (elements.allAccountsBtn) {
+        elements.allAccountsBtn.addEventListener('click', toggleAllAccounts);
+    }
+
+    // ── Pin button — toggle always-on-top ────────────────────────────────────
+    if (elements.pinBtn) {
+        elements.pinBtn.addEventListener('click', async () => {
+            const next = await window.electronAPI.toggleAlwaysOnTop();
+            updatePinButton(next);
+        });
+    }
+
+    // ── Corner snap popover (toolbar) ─────────────────────────────────────────
+    if (elements.cornerSnapToggle) {
+        elements.cornerSnapToggle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const popover = elements.cornerSnapPopover;
+            popover.style.display = popover.style.display === 'none' ? 'block' : 'none';
+        });
+    }
+    document.querySelectorAll('.corner-pop-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            elements.cornerSnapPopover.style.display = 'none';
+            await window.electronAPI.snapToCorner(btn.dataset.corner);
+        });
+    });
+    // Close popover on click outside
+    document.addEventListener('click', () => {
+        if (elements.cornerSnapPopover) elements.cornerSnapPopover.style.display = 'none';
+    });
+
+    // ── Accounts ──────────────────────────────────────────────────────────────
+    let pendingNewAccount = null; // holds { sessionKey, organizationId } after login
+
+    if (elements.addAccountBtn) {
+        elements.addAccountBtn.addEventListener('click', async () => {
+            elements.addAccountBtn.disabled = true;
+            elements.addAccountBtn.textContent = 'Logging in…';
+            try {
+                const result = await window.electronAPI.detectSessionKey();
+                if (!result.success) { elements.addAccountBtn.disabled = false; elements.addAccountBtn.textContent = '+ Add'; return; }
+                const validation = await window.electronAPI.validateSessionKey(result.sessionKey);
+                if (!validation.success) { elements.addAccountBtn.disabled = false; elements.addAccountBtn.textContent = '+ Add'; return; }
+                pendingNewAccount = { sessionKey: result.sessionKey, organizationId: validation.organizationId };
+                elements.newAccountLabel.value = '';
+                elements.nameAccountForm.style.display = 'flex';
+                elements.newAccountLabel.focus();
+            } catch (e) {
+                elements.addAccountBtn.disabled = false;
+                elements.addAccountBtn.textContent = '+ Add';
+            }
+        });
+    }
+
+    if (elements.saveNewAccountBtn) {
+        elements.saveNewAccountBtn.addEventListener('click', async () => {
+            if (!pendingNewAccount) return;
+            const label = (elements.newAccountLabel.value.trim() || 'Account');
+            const id = 'acc_' + Date.now();
+            await window.electronAPI.saveAccount({ id, label, sessionKey: pendingNewAccount.sessionKey, organizationId: pendingNewAccount.organizationId });
+            pendingNewAccount = null;
+            elements.nameAccountForm.style.display = 'none';
+            elements.addAccountBtn.disabled = false;
+            elements.addAccountBtn.textContent = '+ Add';
+            await loadAccounts();
+        });
+    }
+
+    if (elements.cancelNewAccountBtn) {
+        elements.cancelNewAccountBtn.addEventListener('click', () => {
+            pendingNewAccount = null;
+            elements.nameAccountForm.style.display = 'none';
+            elements.addAccountBtn.disabled = false;
+            elements.addAccountBtn.textContent = '+ Add';
+        });
+    }
+
     // Settings button — open compact settings if in compact mode, full settings otherwise
     elements.settingsBtn.addEventListener('click', async () => {
         stopAutoUpdate();
@@ -395,8 +639,9 @@ function setupEventListeners() {
             elements.compactSettingsOverlay.style.display = 'flex';
         } else {
             await loadSettings();
+            await loadAccounts();
             elements.settingsOverlay.style.display = 'flex';
-            window.electronAPI.resizeWindow(318); // Increased from 288 for org selector row
+            window.electronAPI.resizeWindow(440); // settings + accounts section
         }
     });
 
@@ -742,7 +987,11 @@ function resizeWidget(bannerVisible) {
         ? EXPAND_OVERHEAD + (extraCount * WIDGET_ROW_HEIGHT)
         : 0;
     const graphOffset = graphVisible ? GRAPH_HEIGHT : 0;
-    const totalHeight = WIDGET_HEIGHT_COLLAPSED + expandedOffset + graphOffset + bannerOffset;
+    const multiAcctBlocks = elements.multiAccountSection
+        ? elements.multiAccountSection.querySelectorAll('.multi-account-block').length : 0;
+    const multiAcctOffset = allAccountsVisible
+        ? (multiAcctBlocks > 0 ? multiAcctBlocks * 72 + 12 : 28) : 0;
+    const totalHeight = WIDGET_HEIGHT_COLLAPSED + expandedOffset + graphOffset + bannerOffset + multiAcctOffset;
     window.electronAPI.resizeWindow(totalHeight);
 }
 
@@ -1051,7 +1300,7 @@ function startCountdown() {
     countdownInterval = setInterval(() => {
         refreshTimers();
         if (isExpanded) refreshExtraTimers();
-    }, 1000);
+    }, 30000);
 }
 
 // Update progress bar
@@ -1220,7 +1469,7 @@ function showMainContent() {
 function startAutoUpdate() {
     stopAutoUpdate();
     const settings = window._cachedSettings || {};
-    const intervalSecs = parseInt(settings.refreshInterval) || 300;
+    const intervalSecs = parseInt(settings.refreshInterval) || 900;
     updateInterval = setInterval(async () => {
         if (elements.refreshBtn) elements.refreshBtn.classList.add('spinning');
         await fetchUsageData();
@@ -1481,12 +1730,14 @@ async function loadSettings() {
     }
     elements.minimizeToTrayToggle.checked = settings.minimizeToTray;
     elements.alwaysOnTopToggle.checked = settings.alwaysOnTop;
+    if (elements.desktopModeToggle) elements.desktopModeToggle.checked = !!settings.desktopMode;
+    updatePinButton(settings.alwaysOnTop);
     elements.showTrayStatsToggle.checked = settings.showTrayStats || false;
     elements.warnThreshold.value = settings.warnThreshold;
     elements.dangerThreshold.value = settings.dangerThreshold;
     elements.timeFormat.value = settings.timeFormat || '12h';
     elements.weeklyDateFormat.value = settings.weeklyDateFormat || 'date';
-    if (elements.refreshInterval) elements.refreshInterval.value = settings.refreshInterval || '300';
+    if (elements.refreshInterval) elements.refreshInterval.value = settings.refreshInterval || '900';
     elements.usageAlertsToggle.checked = settings.usageAlerts !== false;
     if (elements.compactModeToggle) elements.compactModeToggle.checked = !!settings.compactMode;
 
@@ -1532,7 +1783,7 @@ async function saveSettings() {
         dangerThreshold: danger,
         timeFormat: elements.timeFormat.value || '12h',
         weeklyDateFormat: elements.weeklyDateFormat.value || 'date',
-        refreshInterval: elements.refreshInterval ? (elements.refreshInterval.value || '300') : '300',
+        refreshInterval: elements.refreshInterval ? (elements.refreshInterval.value || '900') : '900',
         usageAlerts: elements.usageAlertsToggle.checked,
         compactMode: isCompactMode,
         graphVisible: graphVisible,
