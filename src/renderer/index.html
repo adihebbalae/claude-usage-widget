@@ -14,10 +14,25 @@
     ">
     <title>Claude Usage Widget</title>
     <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="skins/liquid.css">
     <script src="../../node_modules/chart.js/dist/chart.umd.js"></script>
 </head>
 
 <body>
+    <!-- Liquid skin SVG filters (hidden, referenced by CSS) -->
+    <svg id="skin-filters" aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden;pointer-events:none;">
+        <defs>
+            <filter id="glass-distort" x="-10%" y="-10%" width="120%" height="120%">
+                <feTurbulence type="fractalNoise" baseFrequency="0.012 0.018" numOctaves="2" result="noise"/>
+                <feDisplacementMap in="SourceGraphic" in2="noise" scale="10" xChannelSelector="R" yChannelSelector="G"/>
+            </filter>
+        </defs>
+    </svg>
+
+    <!-- Skin background: blob layer sits here; widget glass layers are CSS pseudo-elements -->
+    <div id="skin-bg" aria-hidden="true">
+        <div id="skin-blobs"></div>
+    </div>
     <div id="app">
         <div class="widget-container" id="widgetContainer">
             <!-- Title Bar -->
@@ -312,6 +327,31 @@
                             </div>
                         </div>
 
+                        <!-- Row 4b: skin selector -->
+                        <div class="settings-row-full">
+                            <span class="settings-row-label">Skin</span>
+                            <div class="skin-selector" id="skinSelector">
+                                <button class="skin-btn active" data-skin="none">
+                                    <span class="skin-preview skin-preview-none"></span>
+                                    <span class="skin-label">None</span>
+                                </button>
+                                <button class="skin-btn" data-skin="liquid">
+                                    <span class="skin-preview skin-preview-liquid"></span>
+                                    <span class="skin-label">Liquid</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Row 4c: glass transparency (Liquid skin only) -->
+                        <div class="settings-row-full" id="glassLevelRow" style="display:none;">
+                            <span class="settings-row-label">Transparency</span>
+                            <select id="glassLevel" class="settings-select">
+                                <option value="clear">Clear</option>
+                                <option value="medium">Medium</option>
+                                <option value="frost">Frosted</option>
+                            </select>
+                        </div>
+
                         <!-- Row 5: time format + warn thresholds -->
                         <div class="settings-row-2col">
                             <div class="settings-col">
@@ -416,6 +456,7 @@
         </div>
     </div>
 
+    <script src="skins/skin-manager.js"></script>
     <script src="app.js"></script>
 </body>
 
