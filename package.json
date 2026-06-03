@@ -7,7 +7,7 @@
     "start": "electron .",
     "build": "electron-builder",
     "build:win": "electron-builder --win",
-    "dev": "cross-env NODE_ENV=development electron . --remote-debugging-port=9223",
+    "dev": "cross-env NODE_ENV=development electron . --remote-debugging-port=9223 --remote-allow-origins=*",
     "build:mac": "electron-builder --mac",
     "build:linux": "electron-builder --linux"
   },
@@ -27,7 +27,7 @@
   "devDependencies": {
     "@electron/notarize": "^3.1.1",
     "cross-env": "^7.0.3",
-    "electron": "^28.3.3",
+    "electron": "^33.4.11",
     "electron-builder": "^24.9.1"
   },
   "dependencies": {

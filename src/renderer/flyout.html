@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="
+        default-src 'none';
+        script-src 'self';
+        style-src 'self' 'unsafe-inline';
+        font-src 'self';
+        img-src 'self' data:;
+        connect-src 'none';
+    ">
+    <title>Claude Usage</title>
+    <link rel="stylesheet" href="flyout.css">
+</head>
+<body>
+    <div class="flyout" id="flyout">
+        <div class="flyout-header">
+            <div class="flyout-title">
+                <img src="../../assets/logo.png" alt="" class="flyout-logo">
+                <span>Claude Usage</span>
+            </div>
+            <div class="flyout-actions">
+                <button class="flyout-action-btn" id="refreshBtn" title="Refresh">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M23 4v6h-6M1 20v-6h6"/>
+                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                    </svg>
+                </button>
+                <button class="flyout-action-btn" id="settingsBtn" title="Settings">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"/>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                    </svg>
+                </button>
+                <button class="flyout-action-btn" id="expandBtn" title="Open full widget">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="15 3 21 3 21 9"/>
+                        <polyline points="9 21 3 21 3 15"/>
+                        <line x1="21" y1="3" x2="14" y2="10"/>
+                        <line x1="3" y1="21" x2="10" y2="14"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <div class="flyout-body" id="flyoutBody">
+            <!-- Loading state -->
+            <div class="flyout-loading" id="loadingState">
+                <div class="flyout-spinner"></div>
+                <span>Loading usage data...</span>
+            </div>
+
+            <!-- Usage content (hidden until data arrives) -->
+            <div class="flyout-usage" id="usageContent" style="display:none;">
+                <!-- Session -->
+                <div class="flyout-metric">
+                    <div class="flyout-metric-header">
+                        <span class="flyout-metric-label">Current Session</span>
+                        <span class="flyout-metric-value" id="sessionPct">0%</span>
+                    </div>
+                    <div class="flyout-bar">
+                        <div class="flyout-bar-fill session" id="sessionBar" style="width:0%"></div>
+                    </div>
+                    <div class="flyout-metric-footer">
+                        <span class="flyout-metric-timer" id="sessionTimer">--:--</span>
+                        <span class="flyout-metric-reset" id="sessionReset">--</span>
+                    </div>
+                </div>
+
+                <!-- Weekly -->
+                <div class="flyout-metric">
+                    <div class="flyout-metric-header">
+                        <span class="flyout-metric-label">Weekly Limit</span>
+                        <span class="flyout-metric-value" id="weeklyPct">0%</span>
+                    </div>
+                    <div class="flyout-bar">
+                        <div class="flyout-bar-fill weekly" id="weeklyBar" style="width:0%"></div>
+                    </div>
+                    <div class="flyout-metric-footer">
+                        <span class="flyout-metric-timer" id="weeklyTimer">--:--</span>
+                        <span class="flyout-metric-reset" id="weeklyReset">--</span>
+                    </div>
+                </div>
+
+                <!-- Account name (shown when multi-account) -->
+                <div class="flyout-account" id="accountInfo" style="display:none;">
+                    <span id="accountName"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="flyout.js"></script>
+</body>
+</html>

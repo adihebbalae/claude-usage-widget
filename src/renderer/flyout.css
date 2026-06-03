@@ -1,0 +1,287 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, sans-serif;
+    font-size: 14px;
+    overflow: hidden;
+    background: transparent;
+    color: #e4e4e4;
+    -webkit-app-region: no-drag;
+}
+
+/* ── Flyout container ──────────────────────────────────────── */
+.flyout {
+    background: rgba(32, 32, 32, 0.78);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    animation: flyout-enter 200ms cubic-bezier(0.1, 0.9, 0.2, 1) both;
+}
+
+@keyframes flyout-enter {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* ── Header ────────────────────────────────────────────────── */
+.flyout-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px 8px;
+}
+
+.flyout-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #e4e4e4;
+}
+
+.flyout-logo {
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    opacity: 0.9;
+}
+
+.flyout-actions {
+    display: flex;
+    gap: 4px;
+}
+
+.flyout-action-btn {
+    width: 30px;
+    height: 30px;
+    border: none;
+    background: transparent;
+    color: #9e9e9e;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 150ms, color 150ms;
+}
+
+.flyout-action-btn:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: #e4e4e4;
+}
+
+.flyout-action-btn:active {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.flyout-action-btn svg {
+    display: block;
+}
+
+/* ── Body ──────────────────────────────────────────────────── */
+.flyout-body {
+    flex: 1;
+    padding: 4px 16px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+/* ── Loading ───────────────────────────────────────────────── */
+.flyout-loading {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    color: #7a7a7a;
+    font-size: 12px;
+}
+
+.flyout-spinner {
+    width: 24px;
+    height: 24px;
+    border: 2px solid rgba(255, 255, 255, 0.08);
+    border-top-color: #8b5cf6;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* ── Usage metrics ─────────────────────────────────────────── */
+.flyout-usage {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.flyout-metric {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.flyout-metric-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+}
+
+.flyout-metric-label {
+    font-size: 12px;
+    color: #9e9e9e;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.flyout-metric-value {
+    font-size: 20px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: #e4e4e4;
+}
+
+/* ── Progress bars ─────────────────────────────────────────── */
+.flyout-bar {
+    height: 4px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.flyout-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 600ms ease, background 300ms ease;
+}
+
+.flyout-bar-fill.session {
+    background: linear-gradient(90deg, #8b5cf6, #a78bfa);
+}
+
+.flyout-bar-fill.weekly {
+    background: linear-gradient(90deg, #3b82f6, #60a5fa);
+}
+
+.flyout-bar-fill.warning {
+    background: linear-gradient(90deg, #f59e0b, #fbbf24);
+}
+
+.flyout-bar-fill.danger {
+    background: linear-gradient(90deg, #ef4444, #f87171);
+}
+
+/* ── Timer / reset footer ──────────────────────────────────── */
+.flyout-metric-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.flyout-metric-timer {
+    font-size: 12px;
+    color: #7a7a7a;
+    font-variant-numeric: tabular-nums;
+}
+
+.flyout-metric-reset {
+    font-size: 12px;
+    color: #5a5a5a;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ── Account badge ─────────────────────────────────────────── */
+.flyout-account {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-top: 4px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.flyout-account span {
+    font-size: 11px;
+    color: #a78bfa;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* ── Light theme ───────────────────────────────────────────── */
+body.theme-light .flyout {
+    background: rgba(243, 243, 243, 0.78);
+    border-color: rgba(0, 0, 0, 0.06);
+}
+
+body.theme-light {
+    color: #1a1a1a;
+}
+
+body.theme-light .flyout-title {
+    color: #1a1a1a;
+}
+
+body.theme-light .flyout-action-btn {
+    color: #666;
+}
+
+body.theme-light .flyout-action-btn:hover {
+    background: rgba(0, 0, 0, 0.04);
+    color: #1a1a1a;
+}
+
+body.theme-light .flyout-metric-label {
+    color: #666;
+}
+
+body.theme-light .flyout-metric-value {
+    color: #1a1a1a;
+}
+
+body.theme-light .flyout-bar {
+    background: rgba(0, 0, 0, 0.08);
+}
+
+body.theme-light .flyout-metric-timer {
+    color: #888;
+}
+
+body.theme-light .flyout-metric-reset {
+    color: #aaa;
+}
+
+body.theme-light .flyout-account {
+    border-top-color: rgba(0, 0, 0, 0.06);
+}
+
+body.theme-light .flyout-account span {
+    color: #7c3aed;
+}
+
+body.theme-light .flyout-loading {
+    color: #999;
+}
+
+body.theme-light .flyout-spinner {
+    border-color: rgba(0, 0, 0, 0.08);
+    border-top-color: #7c3aed;
+}

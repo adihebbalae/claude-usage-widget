@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, session, shell, Notification, safeStorage, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, session, shell, Notification, safeStorage, nativeImage, screen } = require('electron');
 const path = require('path');
 const https = require('https');
 const Store = require('electron-store');
@@ -45,7 +45,7 @@ const store = new Store();
 
 // Debug mode: set DEBUG_LOG=1 env var or pass --debug flag to see verbose logs.
 // Regular users will only see critical errors in the console.
-const DEBUG = process.env.DEBUG_LOG === '1' || process.argv.includes('--debug');
+const DEBUG = process.env.DEBUG_LOG === '1' || process.argv.includes('--verbose');
 function debugLog(...args) {
   if (DEBUG) console.log('[Debug]', ...args);
 }
@@ -53,6 +53,7 @@ function debugLog(...args) {
 const CHROME_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 let mainWindow = null;
+let flyoutWindow = null; // Windows 11 tray flyout
 let sessionTray = null;  // Tray icon for Session usage
 let weeklyTray = null;   // Tray icon for Weekly usage
 
@@ -547,6 +548,151 @@ function showMainWindowClean() {
   mainWindow.focus();
 }
 
+// ── Tray Flyout (Windows 11) ───────────────────────────────────────────────
+
+const FLYOUT_WIDTH = 340;
+const FLYOUT_HEIGHT = 240;
+
+function createFlyoutWindow() {
+  if (flyoutWindow && !flyoutWindow.isDestroyed()) return;
+
+  flyoutWindow = new BrowserWindow({
+    width: FLYOUT_WIDTH,
+    height: FLYOUT_HEIGHT,
+    frame: false,
+    resizable: false,
+    skipTaskbar: true,
+    show: false,
+    alwaysOnTop: true,
+    transparent: false,
+    backgroundMaterial: 'mica',
+    backgroundColor: '#00000000',
+    roundedCorners: true,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload-flyout.js')
+    }
+  });
+
+  flyoutWindow.loadFile('src/renderer/flyout.html');
+  flyoutWindow.on('blur', () => {
+    if (flyoutWindow && !flyoutWindow.isDestroyed()) flyoutWindow.hide();
+  });
+  flyoutWindow.on('closed', () => { flyoutWindow = null; });
+}
+
+function positionFlyoutAtTray(trayBounds) {
+  if (!flyoutWindow || flyoutWindow.isDestroyed()) return;
+
+  const display = screen.getDisplayNearestPoint({ x: trayBounds.x, y: trayBounds.y });
+  const workArea = display.workArea;
+  const screenBounds = display.bounds;
+
+  // Detect taskbar position by comparing workArea to screen bounds
+  const taskbarBottom = workArea.y + workArea.height < screenBounds.y + screenBounds.height;
+  const taskbarTop = workArea.y > screenBounds.y;
+  const taskbarRight = workArea.x + workArea.width < screenBounds.x + screenBounds.width;
+
+  let x, y;
+
+  if (taskbarBottom || (!taskbarTop && !taskbarRight)) {
+    // Taskbar on bottom (most common)
+    x = Math.round(trayBounds.x + trayBounds.width / 2 - FLYOUT_WIDTH / 2);
+    y = workArea.y + workArea.height - FLYOUT_HEIGHT - 12;
+  } else if (taskbarTop) {
+    x = Math.round(trayBounds.x + trayBounds.width / 2 - FLYOUT_WIDTH / 2);
+    y = workArea.y + 12;
+  } else {
+    // Taskbar on right
+    x = workArea.x + workArea.width - FLYOUT_WIDTH - 12;
+    y = Math.round(trayBounds.y + trayBounds.height / 2 - FLYOUT_HEIGHT / 2);
+  }
+
+  // Clamp to work area
+  x = Math.max(workArea.x + 8, Math.min(x, workArea.x + workArea.width - FLYOUT_WIDTH - 8));
+  y = Math.max(workArea.y + 8, Math.min(y, workArea.y + workArea.height - FLYOUT_HEIGHT - 8));
+
+  flyoutWindow.setBounds({ x, y, width: FLYOUT_WIDTH, height: FLYOUT_HEIGHT });
+}
+
+function toggleFlyout(trayBounds) {
+  if (!flyoutWindow || flyoutWindow.isDestroyed()) {
+    createFlyoutWindow();
+  }
+
+  if (flyoutWindow.isVisible()) {
+    flyoutWindow.hide();
+    return;
+  }
+
+  positionFlyoutAtTray(trayBounds);
+  flyoutWindow.show();
+  flyoutWindow.focus();
+  sendUsageToFlyout();
+}
+
+function sendUsageToFlyout() {
+  if (!flyoutWindow || flyoutWindow.isDestroyed() || !flyoutWindow.isVisible()) return;
+  const usage = store.get('latestUsageData');
+  const accounts = store.get('accounts', []);
+  const activeId = store.get('activeAccountId');
+  const active = accounts.find(a => a.id === activeId);
+
+  flyoutWindow.webContents.send('flyout-usage-data', {
+    usage,
+    accountLabel: accounts.length > 1 && active ? active.label : null,
+    settings: {
+      warnThreshold: store.get('settings.warnThreshold', 75),
+      dangerThreshold: store.get('settings.dangerThreshold', 90),
+      timeFormat: store.get('settings.timeFormat', '12h')
+    }
+  });
+}
+
+// ── Flyout IPC handlers ──────────────────────────────────────────────────
+
+ipcMain.on('flyout-refresh', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('refresh-usage');
+  }
+});
+
+ipcMain.on('flyout-open-widget', () => {
+  if (flyoutWindow && !flyoutWindow.isDestroyed()) flyoutWindow.hide();
+  if (mainWindow) {
+    showMainWindowClean();
+  } else {
+    createMainWindow();
+  }
+});
+
+ipcMain.on('flyout-open-settings', () => {
+  if (flyoutWindow && !flyoutWindow.isDestroyed()) flyoutWindow.hide();
+  if (!mainWindow) createMainWindow();
+  showMainWindowClean();
+  mainWindow.webContents.send('open-settings');
+});
+
+ipcMain.handle('flyout-get-initial-state', () => {
+  const usage = store.get('latestUsageData');
+  const theme = store.get('settings.theme', 'dark');
+  const accounts = store.get('accounts', []);
+  const activeId = store.get('activeAccountId');
+  const active = accounts.find(a => a.id === activeId);
+
+  return {
+    usage,
+    theme,
+    accountLabel: accounts.length > 1 && active ? active.label : null,
+    settings: {
+      warnThreshold: store.get('settings.warnThreshold', 75),
+      dangerThreshold: store.get('settings.dangerThreshold', 90),
+      timeFormat: store.get('settings.timeFormat', '12h')
+    }
+  };
+});
+
 function createTray() {
   // Respect the tray stats setting even when createTray is called from generic refresh paths.
   if (!store.get('settings.showTrayStats', false)) {
@@ -622,26 +768,24 @@ function createTray() {
     sessionTray.setContextMenu(contextMenu);
     weeklyTray.setContextMenu(contextMenu);
 
-    // Click handlers - swapped order
-        weeklyTray.on('click', () => {
-      if (mainWindow) {
-        if (mainWindow.isVisible() && !mainWindow.isMinimized()) {
-          mainWindow.hide();
-        } else {
-          showMainWindowClean();
+    // Click handlers — on Windows, open the flyout; other platforms toggle main window
+    const onTrayClick = (event, bounds) => {
+      if (process.platform === 'win32') {
+        const trayBounds = bounds || (weeklyTray && !weeklyTray.isDestroyed() ? weeklyTray.getBounds() : { x: 0, y: 0, width: 0, height: 0 });
+        toggleFlyout(trayBounds);
+      } else {
+        if (mainWindow) {
+          if (mainWindow.isVisible() && !mainWindow.isMinimized()) {
+            mainWindow.hide();
+          } else {
+            showMainWindowClean();
+          }
         }
       }
-    });
-    
-        sessionTray.on('click', () => {
-      if (mainWindow) {
-        if (mainWindow.isVisible() && !mainWindow.isMinimized()) {
-          mainWindow.hide();
-        } else {
-          showMainWindowClean();
-        }
-      }
-    });
+    };
+
+    weeklyTray.on('click', onTrayClick);
+    sessionTray.on('click', onTrayClick);
   } catch (error) {
     console.error('Failed to create tray:', error);
   }
@@ -1372,8 +1516,9 @@ ipcMain.handle('fetch-usage-data', async (event, options = {}) => {
   // Store latest usage data for settings refresh
   store.set('latestUsageData', data);
 
-  // Update tray icon with current usage data
+  // Update tray icon and flyout with current usage data
   updateTrayIcon(data);
+  sendUsageToFlyout();
 
   // Re-assert always-on-top after hidden BrowserWindows from fetchViaWindow
   // are destroyed — creating/destroying BrowserWindows can temporarily disrupt
@@ -1538,6 +1683,11 @@ app.whenReady().then(async () => {
   // Avoid creating temporary tray icons during startup when tray stats are disabled.
   if (store.get('settings.showTrayStats', false)) {
     createTray();
+  }
+
+  // Pre-create flyout window on Windows so it opens instantly on first tray click
+  if (process.platform === 'win32') {
+    createFlyoutWindow();
   }
 
   // Apply persisted settings

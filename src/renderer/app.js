@@ -624,6 +624,19 @@ function setupEventListeners() {
         showLoginRequired();
     });
 
+    // Open settings when requested from flyout or tray
+    window.electronAPI.onOpenSettings(async () => {
+        stopAutoUpdate();
+        if (isCompactMode) {
+            _settingsOpenedFromCompact = true;
+            window.electronAPI.setCompactMode(false);
+        }
+        await loadSettings();
+        await loadAccounts();
+        elements.settingsOverlay.style.display = 'flex';
+        window.electronAPI.resizeWindow(440);
+    });
+
     // Update banner
     elements.updateBannerDismiss.addEventListener('click', () => {
         elements.updateBanner.style.display = 'none';
