@@ -17,9 +17,9 @@
     "widget",
     "electron"
   ],
-  "author": "Slavomir Durej",
+  "author": "Hebbala LLC",
   "license": "MIT",
-  "copyright": "Copyright © 2025 Slavomir Durej",
+  "copyright": "Copyright © 2025 Hebbala LLC",
   "engines": {
     "node": ">=18.0.0",
     "npm": ">=9.0.0"
@@ -37,7 +37,7 @@
   "build": {
     "appId": "com.claudeusage.widget",
     "productName": "Claude-Usage-Widget",
-    "copyright": "Copyright © 2025 Slavomir Durej",
+    "copyright": "Copyright © 2025 Hebbala LLC",
     "publish": null,
     "win": {
       "target": [
@@ -81,7 +81,7 @@
         "teamId": "X84UXCNLPX"
       },
       "extendInfo": {
-        "NSHumanReadableCopyright": "Copyright © 2025 Slavomir Durej"
+        "NSHumanReadableCopyright": "Copyright © 2025 Hebbala LLC"
       }
     },
     "dmg": {

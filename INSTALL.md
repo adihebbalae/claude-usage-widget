@@ -5,13 +5,13 @@
 ### Windows
 
 **Option 1: Installer (Recommended)**
-1. Download the latest `Claude-Usage-Widget-{version}-win-Setup.exe` from [Releases](https://github.com/SlavomirDurej/claude-usage-widget/releases)
+1. Download the latest `Claude-Usage-Widget-{version}-win-Setup.exe` from [Releases](https://github.com/adihebbalae/claude-usage-widget/releases)
 2. Run the installer
 3. Launch "Claude Usage Widget" from the Start Menu
 4. Login when prompted
 
 **Option 2: Portable (No Installation)**
-1. Download the latest `Claude-Usage-Widget-{version}-win-portable.exe` from [Releases](https://github.com/SlavomirDurej/claude-usage-widget/releases)
+1. Download the latest `Claude-Usage-Widget-{version}-win-portable.exe` from [Releases](https://github.com/adihebbalae/claude-usage-widget/releases)
 2. Run the portable exe directly
 3. No installation needed - runs from wherever you place it
 
@@ -29,7 +29,7 @@
 1. Download the latest DMG for your Mac:
    - Apple Silicon (M1/M2/M3): `Claude-Usage-Widget-{version}-macOS-arm64.dmg`
    - Intel Mac: `Claude-Usage-Widget-{version}-macOS-x64.dmg`
-   - Available from [Releases](https://github.com/SlavomirDurej/claude-usage-widget/releases)
+   - Available from [Releases](https://github.com/adihebbalae/claude-usage-widget/releases)
 2. Open the DMG file
 3. Drag "Claude Usage Widget" to your Applications folder
 4. Launch from Applications
@@ -56,7 +56,7 @@ Then launch the app again.
 1. Download the latest AppImage for your architecture:
    - Intel/AMD (64-bit): `Claude-Usage-Widget-{version}-linux-x86_64.AppImage`
    - ARM (64-bit): `Claude-Usage-Widget-{version}-linux-arm64.AppImage`
-   - Available from [Releases](https://github.com/SlavomirDurej/claude-usage-widget/releases)
+   - Available from [Releases](https://github.com/adihebbalae/claude-usage-widget/releases)
 2. Make it executable:
    ```bash
    chmod +x Claude-Usage-Widget-*.AppImage
@@ -174,7 +174,7 @@ The widget will now launch automatically when you log in.
 
 **Build Steps:**
 ```bash
-git clone https://github.com/SlavomirDurej/claude-usage-widget.git
+git clone https://github.com/adihebbalae/claude-usage-widget.git
 cd claude-usage-widget
 npm install
 npm start
@@ -231,4 +231,4 @@ Run: `xattr -cr /Applications/Claude\ Usage\ Widget.app`
 **Linux: AppImage won't run**  
 Install libfuse2: `sudo apt install libfuse2`
 
-If issues persist, open a [Support Discussion](https://github.com/SlavomirDurej/claude-usage-widget/discussions/categories/support) with your OS, Node.js version, and full error output.
+If issues persist, open a [Support Discussion](https://github.com/adihebbalae/claude-usage-widget/discussions/categories/support) with your OS, Node.js version, and full error output.

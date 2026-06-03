@@ -4,7 +4,7 @@ Get up and running with Claude Usage Widget in under 2 minutes.
 
 ## Step 1: Download
 
-Go to [Releases](https://github.com/SlavomirDurej/claude-usage-widget/releases) and download the latest version for your platform:
+Go to [Releases](https://github.com/adihebbalae/claude-usage-widget/releases) and download the latest version for your platform:
 
 - **Windows:** `Claude-Usage-Widget-{version}-win-Setup.exe`
 - **macOS:** `Claude-Usage-Widget-{version}-macOS-arm64.dmg` (Apple Silicon) or `-x64.dmg` (Intel)
@@ -101,7 +101,7 @@ Right-click the tray icon → "Log Out" to clear your session.
 
 - **Installation issues:** See [INSTALL.md](INSTALL.md) for detailed platform-specific guides
 - **Feature questions:** Check the [README](README.md)
-- **Problems:** Open a [Support Discussion](https://github.com/SlavomirDurej/claude-usage-widget/discussions/categories/support)
+- **Problems:** Open a [Support Discussion](https://github.com/adihebbalae/claude-usage-widget/discussions/categories/support)
 
 ---
 

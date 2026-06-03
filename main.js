@@ -4,7 +4,7 @@ const https = require('https');
 const Store = require('electron-store');
 const { fetchViaWindow, fetchMultipleViaWindow } = require('./src/fetch-via-window');
 
-const GITHUB_OWNER = 'SlavomirDurej';
+const GITHUB_OWNER = 'adihebbalae';
 const GITHUB_REPO = 'claude-usage-widget';
 
 // Migration: Handle old encrypted config files from v1.7.0 and earlier

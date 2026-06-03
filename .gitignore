@@ -37,12 +37,18 @@ yarn-error.log*
 .cache/
 .temp/
 
+# Internal dev strategy & planning (never committed)
+.dev/
+
 # Local dev scratch files
 msg.txt
 RELEASE_NOTES_DRAFT.md
 CLAUDE.md
 GITHUB_RELEASE_DESCRIPTION.txt
 test-version.js
+
+# Test artifacts
+test-*.png
 
 # Code signing credentials (NEVER COMMIT THESE)
 developer_id.key
