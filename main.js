@@ -1001,7 +1001,9 @@ ipcMain.handle('get-settings', () => {
     refreshInterval: store.get('settings.refreshInterval', '300'),
     graphVisible: store.get('settings.graphVisible', false),
     expandedOpen: store.get('settings.expandedOpen', false),
-    showTrayStats: store.get('settings.showTrayStats', false)
+    showTrayStats: store.get('settings.showTrayStats', false),
+    skin: store.get('settings.skin', 'none'),
+    glassLevel: store.get('settings.glassLevel', 'medium')
   };
 });
 
@@ -1023,6 +1025,8 @@ ipcMain.handle('save-settings', (event, settings) => {
   store.set('settings.graphVisible', settings.graphVisible);
   store.set('settings.expandedOpen', settings.expandedOpen);
   store.set('settings.showTrayStats', settings.showTrayStats);
+  store.set('settings.skin', settings.skin || 'none');
+  store.set('settings.glassLevel', settings.glassLevel || 'medium');
 
   // openAtLogin is not supported on Linux — Electron silently ignores it.
   // Skip the call entirely to avoid misleading behaviour.

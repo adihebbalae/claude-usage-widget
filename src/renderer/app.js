@@ -81,6 +81,7 @@ const elements = {
     warnThreshold: document.getElementById('warnThreshold'),
     dangerThreshold: document.getElementById('dangerThreshold'),
     themeBtns: document.querySelectorAll('.theme-btn'),
+    skinBtns: document.querySelectorAll('.skin-btn'),
     timeFormat: document.getElementById('timeFormat'),
     weeklyDateFormat: document.getElementById('weeklyDateFormat'),
     refreshInterval: document.getElementById('refreshInterval'),
@@ -385,10 +386,12 @@ async function init() {
     setupEventListeners();
     credentials = await window.electronAPI.getCredentials();
 
-    // Apply saved theme and load thresholds immediately
+    // Apply saved theme + skin and load thresholds immediately
     const settings = await window.electronAPI.getSettings();
     window._cachedSettings = settings;
     applyTheme(settings.theme);
+    window.SkinManager.applySkin(settings.skin || 'none');
+    applyGlassLevel(settings.glassLevel);
     if (window.electronAPI.platform === 'darwin') {
         document.getElementById('trayLabel').textContent = 'Hide from Dock';
     }
@@ -575,6 +578,21 @@ function setupEventListeners() {
             applyTheme(btn.dataset.theme);
         });
     });
+
+    // Skin buttons
+    elements.skinBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            elements.skinBtns.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            window.SkinManager.applySkin(btn.dataset.skin);
+            syncGlassRow();
+        });
+    });
+
+    const _glSelect = document.getElementById('glassLevel');
+    if (_glSelect) {
+        _glSelect.addEventListener('change', () => applyGlassLevel(_glSelect.value));
+    }
 
     // Prevent accidental app hiding: bidirectional coupling between Hide from Taskbar and Show Tray Stats
     // If user enables "Hide from Taskbar", automatically enable "Show Tray Stats" (ensures tray icon is visible)
@@ -1854,7 +1872,17 @@ async function loadSettings() {
         btn.classList.toggle('active', btn.dataset.theme === settings.theme);
     });
 
+    elements.skinBtns.forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.skin === (settings.skin || 'none'));
+    });
+
+    const _gl = document.getElementById('glassLevel');
+    if (_gl) _gl.value = settings.glassLevel || 'medium';
+    applyGlassLevel(settings.glassLevel);
+    syncGlassRow();
+
     applyTheme(settings.theme);
+    window.SkinManager.applySkin(settings.skin || 'none');
     if (window.electronAPI.platform === 'darwin') {
         document.getElementById('trayLabel').textContent = 'Hide from Dock';
     }
@@ -1862,6 +1890,7 @@ async function loadSettings() {
 
 async function saveSettings() {
     const activeThemeBtn = document.querySelector('.theme-btn.active');
+    const activeSkinBtn = document.querySelector('.skin-btn.active');
     const warn = parseInt(elements.warnThreshold.value) || 75;
     const danger = parseInt(elements.dangerThreshold.value) || 90;
 
@@ -1880,6 +1909,8 @@ async function saveSettings() {
         alwaysOnTop: elements.alwaysOnTopToggle.checked,
         showTrayStats: elements.showTrayStatsToggle.checked,
         theme: activeThemeBtn ? activeThemeBtn.dataset.theme : 'dark',
+        skin: activeSkinBtn ? activeSkinBtn.dataset.skin : 'none',
+        glassLevel: (document.getElementById('glassLevel') || {}).value || 'medium',
         warnThreshold: warn,
         dangerThreshold: danger,
         timeFormat: elements.timeFormat.value || '12h',
@@ -1893,6 +1924,8 @@ async function saveSettings() {
     await window.electronAPI.saveSettings(settings);
     window._cachedSettings = settings;
     applyTheme(settings.theme);
+    window.SkinManager.applySkin(settings.skin || 'none');
+    applyGlassLevel(settings.glassLevel);
     if (window.electronAPI.platform === 'darwin') {
         document.getElementById('trayLabel').textContent = 'Hide from Dock';
     }
@@ -1914,6 +1947,18 @@ function applyTheme(theme) {
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
     const useDark = theme === 'dark' || (theme === 'system' && prefersDark);
     document.body.classList.toggle('theme-light', !useDark);
+}
+
+// Liquid-skin transparency level (clear / medium / frost), via data-glass on body.
+// Harmless when another skin is active — the CSS only reacts under data-skin="liquid".
+function applyGlassLevel(level) {
+    document.body.setAttribute('data-glass', level || 'medium');
+}
+function syncGlassRow() {
+    const row = document.getElementById('glassLevelRow');
+    if (!row) return;
+    const activeSkin = document.querySelector('.skin-btn.active')?.dataset.skin || 'none';
+    row.style.display = (activeSkin === 'liquid') ? '' : 'none';
 }
 
 // Update check
