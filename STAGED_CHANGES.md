@@ -11,102 +11,46 @@ This file is tracked in the repo and visible to everyone.
 
 | Branch | Description |
 |--------|-------------|
-| `feature/compact-settings-fullscreen` | Open full settings panel from compact mode instead of limited overlay |
-| `feature/chart-time-scale` | Proportional time-scale X-axis for usage graph |
-| `fix/account-history-isolation` | Per-account history isolation, invalid session write guard, stale data pruning |
-| `design/settings-column-reorder` | Settings panel right-column reorder |
-| `fix/chart-axis-bounds` | Clamp chart X-axis to actual data range; stable daily tick labels |
-| `feature/extended-usage-fields` | Display Cowork, OAuth Apps, Sonnet, Opus rows and chart lines; fix resets_at blank |
-| `fix/rc-version-update-alert` | Pre-release tags never trigger update alert regardless of version number |
-| `fix/claude-design-field` | Add Design (7d) row and chart line for seven_day_omelette field (brown) |
-| PR #64 (irishpolyglot) | Reduce countdown interval from 1s to 30s — ~20x CPU reduction on idle |
+| `fix/ci-actions-node20` | Bump actions/checkout and actions/setup-node to v5; Node.js matrix 18→20 |
+| `feature/profile-flag` | Add `--profile=<name>` flag for isolated multi-account sessions |
+| `feature/blocked-available-notifications` | Notify on full block (session or weekly at 100%) and on genuine availability; fix danger notifications firing past 100%; clarify warn/danger wording |
+| `fix/offscreen-window-recovery` | Recover from a saved window position that's off-screen after a monitor configuration change; centers the window instead of leaving it unreachable |
+| `fix/center-app-recovery` | Live off-screen window recovery on tray/taskbar click (no menu needed); fix app getting stuck running invisibly with no recovery path when closing/minimizing while Tray Stats is off |
+| `fix/quit-flag` | Fix "Exit" tray menu item not actually quitting when Tray Stats is on (regression from `fix/center-app-recovery`'s close-to-tray handler) |
+| `fix/elapsed-ring-color` | Decouple the Elapsed-time ring color from the usage warn/danger thresholds; hardcoded amber at 75% elapsed, green at 90% elapsed |
+| `feature/credit-clarity` | Clarify usage-credit spend vs balance in the expanded panel: relabel the spend meter as a monthly cap, add a Credits row with promo/paid split and an expiry warning |
+| `fix/electron-cve-update` | Update Electron 28→41 and electron-builder 24→26 to resolve 6 high-severity CVEs (from PR #102); fixes a version-field regression and mangled copyright string from the source branch, plus a schema break in the mac notarize config surfaced by testing the actual packaged build |
+| `feature/fable-usage` | Surface per-model weekly limits (Fable, and any future scoped model) from the API's `limits[]` array — expanded row, chart line, and compact-mode row, all threshold-colored (from PRs #98, #105, #107) |
+| `feature/compact-spend-row` | Add a collapsible Monthly Spend row to compact mode, gated behind a chevron toggle; spend/credit endpoints are only polled while the row is open (Discussion #103) |
+| `feature/rc-update-check` | Notify pre-release (RC/beta) users when a newer pre-release ships, not just when a stable release does — GitHub's `/releases/latest` never returns pre-releases, so this was previously a dead end for RC testers; also fixes a numeric-vs-string comparison bug (`rc.10` vs `rc.9`) and a compact-mode window-sizing bug the update banner triggered |
 
 ---
 
 ## Changes
 
-### feature/compact-settings-fullscreen
+- **Multi-account support (power-user flag):** Launching with `--profile=<name>` isolates the instance to its own userData subfolder, giving it a completely separate Electron session, cookies, and settings. Enables two accounts to run side-by-side without interfering. Works for both installed and portable builds.
 
-**Full settings from compact mode**
-In compact mode, clicking the settings icon now temporarily expands the window to full size and opens the complete settings panel — the same panel available in normal mode. Previously, compact mode only showed a minimal overlay with a single compact mode toggle.
+- **Blocked/available notifications (Discussion #85):** Notifies once usage is fully blocked — session or weekly hits 100% — and again when it's genuinely available. A single combined flag spans both windows, so a session reset never falsely reports "available again" while the weekly limit is still maxed out. Also fixes the existing danger-threshold notification firing past 100% with stale wording, and clarifies tier wording to "usage is low" / "usage is extremely low".
 
-After clicking **Done**, all settings are saved and the window returns to compact mode. If the user disables compact mode inside settings, the window stays at normal size.
+- **Off-screen window recovery (Issue #94):** On startup, the saved window position is now checked against all currently connected displays. If it falls entirely outside every display's work area — for example after switching from an ultrawide to a laptop-only setup — the window centers itself on the primary display instead of launching invisibly with no way to recover it.
 
----
+- **Live off-screen recovery, no menu needed (Issue #94 follow-up):** The same on-screen check now also runs on tray click, taskbar left-click, restore, and focus — not just at startup. If a monitor setup changes while the app is already running, the very first click on the tray icon or taskbar brings it back on-screen immediately. A valid custom position is left untouched either way.
 
-### feature/chart-time-scale
+- **Fixed: app could get stuck running invisibly with no way back:** With Tray Stats off (no tray icon), closing the window via the taskbar's native "Close window" — or the in-app close button — used to just hide the window. With no tray icon and no taskbar entry left, the app kept running in the background with no way to bring it back short of Task Manager. Close now actually quits the app in that case. Minimize got the same fix: "hide from taskbar" only hides if a tray icon exists to recover through; otherwise it falls back to a normal, taskbar-recoverable minimize.
 
-**Proportional time-scale X-axis for usage graph**
-The graph X-axis now positions data points according to their actual timestamps rather than evenly spaced categorical slots. This fixes two issues reported in discussion #61:
+- **Fixed: "Exit" silently did nothing with Tray Stats on:** `app.quit()` closes windows as part of its normal sequence, which fires the same `'close'` event the hide-to-tray handler above listens for — so Exit was getting caught by its own fix and just hiding instead of quitting. A flag set on `'before-quit'` (which fires before any window closes, on every quit path) now lets the close handler tell a real quit apart from a click on the close button.
 
-- Time gaps (e.g. closing the app overnight) now appear as proportional gaps in the graph line rather than being compressed
-- Rapid manual refreshes no longer stretch the chart — closely spaced points cluster correctly without distorting the scale
+- **Elapsed-ring color decoupled from usage thresholds (Discussion #100):** The session/weekly/extra-row countdown rings were reusing the usage warn/danger thresholds and colors, so a ring could turn amber or red purely because time had elapsed toward a reset — even with usage sitting low — which is misleading, since a reset approaching isn't a warning. The ring now uses its own hardcoded thresholds, independent of the user's usage-alert settings: amber at 75% elapsed, green (not red) at 90% elapsed, reflecting that an imminent reset is a neutral-to-good event. One shared function drives session, weekly, and all extra-row rings, so the fix applies everywhere at once. Reported by KickTechnic.
 
----
+- **Credit clarity for Extra Usage:** The panel previously showed "Extra Usage $X/$Y" next to "Account Credits: $Z" with no indication of how they relate, which reads as two separate pools of money when they're not — investigation (see Discussion threads on Fable billing) confirmed the app already fetches both `/overage_spend_limit` and `/prepaid/credits` but only surfaced the credit balance total, not tranche detail. Two changes: (1) the spend meter is relabeled "Monthly Spend $X/$Y cap" to make clear it's a consumption throttle, not a running bill — real money only moves when credits are purchased or auto-reload fires; (2) a new Credits row shows the live balance, and — only when relevant — a promo-vs-purchased split (so "money at risk" is visible the moment any purchased credit is mixed in) and an expiry warning chip (amber inside 21 days, red inside 7) for the soonest-expiring credit tranche. Both additions are conditional and collapse to a single quiet line when there's nothing time-sensitive to flag. No new API calls — parses fields already present in the existing `/prepaid/credits` response that were previously discarded.
 
-### fix/account-history-isolation
+- **Electron/electron-builder security update (community contribution):** `npm audit` flagged 6 high-severity CVEs against Electron 28.3.3 (ASAR integrity bypass, AppleScript injection, several use-after-free issues) and the electron-builder/tar toolchain. @Dolphin2ii opened PR #102 with the fix; an initial jump straight to Electron 43 was walked back to 41.10.1 after community feedback, keeping the same CVE coverage with a smaller compatibility surface. Landed via local branch rather than a direct merge so the actual regression risk — the BrowserWindow-based session-cookie login flow — could be tested first, since that's a hard requirement independent of this fix. Testing surfaced three issues not visible from `npm start` alone: the source branch's `package.json` had a stale version field (predated the `1.7.6-dev` bump, resolved automatically by rebasing onto current `develop` instead of merging directly); the copyright string was mangled UTF-8 in both the before and after (now genuinely fixed); and electron-builder 26's stricter config schema rejects the old object-form `mac.notarize` config, only caught by running an actual `electron-builder --win portable` build rather than just launching the app — fixed by switching to the boolean form, since the real signing credentials already live in environment variables per `MACOS_CODE_SIGNING.md`. `npm audit` is clean at 0 vulnerabilities. (Correction: an additional transitive advisory, `fast-uri`, surfaced after the v41 downgrade but was not actually resolved at the time — the lockfile still carried the vulnerable 3.1.4 range through the v1.7.6 RC cycle. Caught and fixed during the v1.7.6 release cut: bumped to 3.1.5 via `npm audit fix`. Also surfaced during that fix: this machine has `NODE_ENV=production` set persistently, which caused the fix to silently strip devDependencies from `node_modules` — reinstalled with `--include=dev` to restore them; `package.json`/`package-lock.json` were unaffected.) Full regression pass: login/session, tray, usage fetch, and a signed portable build all verified working on Windows.
 
-**Per-account history isolation (issue #63)**
-Usage history is now stored under a namespaced key per organization ID (`usageHistory_<orgId>`). Switching accounts shows only that account's data in the graph. Switching back to a previous account restores its history. Existing single-account history is automatically migrated to the new key format on first launch — no data is lost.
+- **Fable weekly-limit support (community contribution, from 3 independent PRs):** Since the Fable launch, claude.ai stopped filling the legacy `seven_day_<model>` field for per-model weekly limits and started reporting them only as `weekly_scoped` entries in the generic `limits[]` array (upstream issue #97) — so no Fable bar rendered on affected accounts. Three contributors independently found and fixed the same root cause: @irishpolyglot (PR #98, first to file — includes the extra-row timer-pairing fix, see below), @torsten-liermann (PR #105 — normalizes centrally in the main process rather than the renderer, which is the difference that matters: renderer-only normalization leaves usage history and the chart empty for scoped models, since history is written before the renderer ever sees the data), and @gastyg (PR #107 — adds the equivalent row to compact mode, which neither other PR touched). Landed as a composite: #105's central-normalization approach as the base (a new `src/normalize-usage-limits.js` module maps any `weekly_scoped` entry onto a synthetic `seven_day_<n>` field before history storage and rendering both see it), #107's compact-mode work adapted on top (its own duplicate inline normalization was dropped in favor of the shared module), and #98's timer-pairing fix (`refreshExtraTimers()` was pairing two `querySelectorAll` lists by index, which breaks as soon as a row — the spend row — has a timer text with no timer circle; both #98 and #105 independently found and fixed the identical bug the same way). Fable gets a first-class row with its own fuchsia color; any other future scoped model gets a generic fallback row and color automatically, no code change required. One additional bug found during testing: extra rows (Sonnet, Opus, Fable, Cowork, Design, OAuth Apps) shared a render path that never checked the warn/danger thresholds at all, so they showed a flat color regardless of usage level — only the Monthly Spend row and compact mode had the check. Fixed for all of them at once, not just Fable. Testing note: none of us can visually verify the Fable row against a live account here, since it only applies to Max/Team Premium — Pro accounts bill Fable via usage credits rather than a weekly limit and never produce a `weekly_scoped` entry. Verified instead via a temporary mocked API response exercising the full pipeline (normalization → history → expanded row → chart → compact mode) across three states: normal usage, danger threshold, and an unknown fallback model.
 
-**Invalid session write guard (issue #63)**
-The app now skips writing to the graph if the API response is missing reset timestamps. A valid authenticated session always includes these; their absence reliably indicates a dead session (removed device, expired token, etc.). Zero values from invalid sessions will no longer pollute the graph.
+- **Collapsible spend row in compact mode (Discussion #103):** Compact mode showed Session, Weekly, and (when applicable) Fable, but had no way to see Monthly Spend without switching to normal mode. Adds a chevron toggle below the existing rows — same rotate-180 arrow pattern as the normal panel's expand toggle — that reveals a fourth bar row for spend, collapsed by default. To preserve compact mode's existing "no background polling nobody can see" behavior, the spend/credit endpoints are only fetched while the row is open; collapsing it stops the polling entirely, and opening it triggers an immediate fetch rather than waiting for the next refresh cycle so the bar isn't stale the moment it appears. The open/closed state persists across restarts and survives switching between compact and normal mode.
 
-**Stale history pruning**
-A startup pruner scans all per-account history keys and removes entries older than 8 days. If a key becomes empty (all entries expired), the key itself is deleted. This automatically cleans up data from accounts that are no longer in use. Retention window also reduced from 30 days to 8 days to align with the 7-day chart display.
+- **Pre-release users now get notified about newer pre-releases:** The update check has always compared against GitHub's `/releases/latest` endpoint, but that endpoint is defined by GitHub to only ever return the newest *stable* release — pre-releases are excluded from it entirely, at the API level, not by anything in this app's code. That meant RC testers had no notification path at all: someone running `1.7.6-rc.2` would never learn `rc.3` shipped unless told directly. Adds a second check, gated behind the local build itself being a pre-release, that queries the plural `/releases` endpoint (every release, tagged `prerelease: true/false`) and compares against the newest one found there. Runs only when the stable check doesn't already find something newer, since a full stable release outranks any RC. Two bugs found while building this, both fixed: (1) the existing version comparator compared pre-release suffixes as raw strings, which silently breaks past single digits (`"rc.10"` sorts before `"rc.9"` alphabetically) — now parses the numeric suffix explicitly, and both the stable-only check and the new pre-release check share one comparator so they can't drift apart; (2) the update banner's resize call was normal-mode only and would force a compact-mode window to full normal-mode dimensions the moment a banner appeared, self-correcting only on the next fetch cycle — compact mode's height calculation now accounts for the banner directly. `dev` (the placeholder version on `develop` itself) is explicitly excluded from the new check, since a dev-branch runner is by definition at least as new as any RC cut from that branch, and would only get backwards information from a "newer pre-release" notification.
 
----
-
-### design/settings-column-reorder
-
-**Settings panel right-column reorder**
-The right column of the settings panel now reads top to bottom: Hide from Taskbar, Show tray stats, Usage Alerts, Organization (when visible). Previously Show tray stats was separated from the other toggles and the org selector had its own standalone row at the bottom. The org selector now shares the Theme row, removing a redundant row from the layout.
-
----
-
-### fix/chart-axis-bounds
-
-**Stable chart X-axis with correct date range**
-The usage graph X-axis now clamps exactly to the data range — no more future dates appearing when Chart.js auto-extended the axis beyond the last data point. Daily tick labels are generated using calendar day arithmetic (`setDate(d + 1)`) rather than fixed millisecond steps, so labels stay stable across auto-refreshes regardless of when data was collected.
-
----
-
-### feature/extended-usage-fields
-
-**Extended API usage fields: Cowork, OAuth Apps, Sonnet, Opus**
-The widget now displays rows and graph lines for additional API fields returned by some account types:
-
-- **Cowork (7d)** — shown in cyan. Handles accounts that return this data under the internal `seven_day_omelette` field name by normalizing it to `seven_day_cowork` before rendering.
-- **OAuth Apps (7d)** — shown in orange.
-- **Sonnet (7d)** — shown in rose/pink. Fixes a pre-existing color conflict where this row used the same blue as the Weekly bar.
-- **Opus (7d)** — shown in amber.
-
-All four rows and chart lines only appear when the API returns non-null data for that field, so users on plans without model-level breakdowns see no change.
-
-**Fix: Resets At blank for all extra rows**
-The reset date text (e.g. "Resets May 27") was never being populated for any extra row — the span was created but left empty. All extra rows now correctly display their reset date using the same `formatResetsAt` logic as the main session and weekly rows.
-
----
-
-### fix/rc-version-update-alert
-
-**Pre-release versions never trigger update notifications**
-The update check now immediately returns false if the remote version has any pre-release suffix (rc, beta, alpha, etc.), regardless of whether the version number is higher than the installed version. Previously the pre-release check was only applied when version numbers were equal — so a tag like `v1.7.5-rc.1` compared against an installed `1.7.4` would incorrectly trigger the update alert.
-
----
-
-### fix/claude-design-field
-
-**Add Design (7d) row and chart line**
-The `seven_day_omelette` API field was previously (incorrectly) aliased to Cowork. It is now correctly mapped as its own "Design (7d)" row in brown, with history tracking and a chart line. The erroneous normalization has been removed so Cowork and Design are fully independent.
-
----
-
-### PR #64 — irishpolyglot
-
-**Reduce countdown polling interval from 1s to 30s**
-The `startCountdown()` interval was reduced from 1000ms to 30000ms. Since the timer display only shows minute-level precision, ticking every second was triggering unnecessary Electron repaints with no visible benefit. Contributor measured approximately 20x reduction in idle CPU usage (from ~20% to ~1%) on Linux. New data from API fetches still displays immediately — the countdown only keeps the timer ticking between polls.
-
----
 
 *Add new entries above this line as additional branches are staged.*

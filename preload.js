@@ -57,6 +57,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Platform
   platform: process.platform,
+  isPortable: process.platform === 'win32' && !!process.env.PORTABLE_EXECUTABLE_FILE,
 
   // Settings
   getSettings: () => ipcRenderer.invoke('get-settings'),

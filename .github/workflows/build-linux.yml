@@ -1,4 +1,4 @@
-name: Build Linux (AppImage)
+﻿name: Build Linux (AppImage)
 
 on:
   push:
@@ -16,14 +16,14 @@ jobs:
 
     strategy:
       matrix:
-        node-version: [18]
+        node-version: [20]
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node-version }}
 
@@ -63,7 +63,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           draft: false
-          prerelease: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             dist/*x86_64*.AppImage
             dist/*arm64*.AppImage

@@ -23,40 +23,11 @@ A beautiful, standalone desktop widget for **Windows, macOS, and Linux** that di
 🔔 **Update Notifications** — Automatic check for new releases on startup  
 🕐 **Configurable Date & Time Formats** — 12h/24h time, and flexible weekly reset date display  
 📐 **Compact Mode** — Minimal view for when you just need a quick glance  
+🧩 **Per-Model Breakdowns** — Rows and chart lines for Sonnet, Opus, Fable, Cowork, OAuth Apps, and Design usage when your account reports them  
+💳 **Credit Clarity** — Monthly spend cap and credit balance shown separately, with a promo-vs-purchased split and expiry warnings  
+👥 **Multi-Account Support** — Run isolated instances for separate accounts via the `--profile` flag (see below)  
 
----
-
-## What's New in v1.7.0
-
-### 🎨 Dynamic Threshold Colors
-
-All usage bars (Session, Weekly, and Extra Usage) now respect your configured warning and danger thresholds:
-- **Green** below warning threshold
-- **Amber** at or above warning threshold
-- **Red** at or above danger threshold
-
-Changes apply immediately when thresholds are adjusted in Settings.
-
-### 📈 Usage History Graph
-
-A toggleable usage history graph now sits below the main widget. Click the graph button in the toolbar to show or hide it.
-
-![Claude Usage Widget - Graph](assets/screenshot-graph.png)
-
-- Displays up to **7 days** of collected usage data points
-- **Data points are captured each time the app refreshes** (every 5 minutes by default when running)
-- History **persists across restarts** — collected data is retained when you close and reopen the app
-- Sonnet and Extra Usage lines appear automatically when those sections are relevant
-- **Adaptive x-axis labels** — shows times for short spans, weekday+hour for medium spans, and dates for longer spans
-- Respects your **12h/24h time format** setting
-- Hover tooltip shows exact timestamp and value
-
-> **Note:** The graph shows usage snapshots captured at each refresh interval while the app is running. Time periods when the app is closed are not represented on the graph.
-
-### 🌍 Currency Support
-The Extra Usage row now displays the correct currency symbol based on your account's billing currency — **€**, **£**, or **$**.
-
-> For full release history, see the [Releases](../../releases) page.
+> For a full history of changes by version, see [Release Notes](RELEASE_NOTES_1.7.X.md).
 
 ---
 
@@ -76,7 +47,7 @@ The Extra Usage row now displays the correct currency symbol based on your accou
 - 🔔 **Usage alerts** — Desktop notifications at warn/danger thresholds
 - 🕐 **Time format** — 12h or 24h
 - 📅 **Date format** — Controls how the weekly reset date is displayed
-- 📐 **Compact mode** — Minimal two-bar view
+- 📐 **Compact mode** — Minimal view
 
 ---
 
@@ -88,6 +59,7 @@ The Extra Usage row now displays the correct currency symbol based on your accou
 1. Download the latest `Claude-Usage-Widget-{version}-win-Setup.exe` (installer) or `Claude-Usage-Widget-{version}-win-portable.exe` (no install needed) from [Releases](../../releases)
 2. Run the installer or portable exe
 3. Launch "Claude Usage Widget" from the Start Menu (installer) or directly (portable)
+4. **To launch at Windows startup (portable only):** Press `Win+R`, type `shell:startup`, and copy the portable `.exe` into that folder. To update, copy the new version in and delete the old one.
 
 **macOS:**
 1. Download the latest `Claude-Usage-Widget-{version}-macOS-arm64.dmg` (Apple Silicon) or `Claude-Usage-Widget-{version}-macOS-x64.dmg` (Intel) from [Releases](../../releases)
@@ -191,6 +163,14 @@ npm start
 
 Right-click the tray icon for: Show/Hide, Refresh, Re-login, Settings, Exit.
 
+### Multi-Account Support (Advanced)
+
+Launch with `--profile=<name>` to run a fully isolated instance — its own session, cookies, and settings — so you can track two Claude accounts side by side without them interfering.
+
+Example: `claude-usage-widget --profile=work`
+
+This is a power-user feature, tested by us but not yet broadly validated by the community — if you hit issues, please open a GitHub Discussion.
+
 ---
 
 ## Understanding the Display
@@ -262,6 +242,10 @@ Special thanks to these contributors who have improved the widget:
 - [@dion-jy](https://github.com/dion-jy) - Login flow architecture improvements
 - [@goooseman](https://github.com/goooseman) - Login window security improvements
 - [@sergkuzn](https://github.com/sergkuzn) - Linux desktop launcher & autostart documentation
+- [@Dolphin2ii](https://github.com/Dolphin2ii) - Electron/electron-builder security update
+- [@torsten-liermann](https://github.com/torsten-liermann) - Per-model weekly limit support (Fable)
+- [@gastyg](https://github.com/gastyg) - Fable row for compact mode
+- [@irishpolyglot](https://github.com/irishpolyglot) - Fable timer-pairing bug fix
 
 ---
 
