@@ -80,5 +80,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveAccount: (data) => ipcRenderer.invoke('save-account', data),
   deleteAccount: (id) => ipcRenderer.invoke('delete-account', id),
   switchAccount: (id) => ipcRenderer.invoke('switch-account', id),
-  fetchAllAccountsData: () => ipcRenderer.invoke('fetch-all-accounts-data')
+  fetchAllAccountsData: () => ipcRenderer.invoke('fetch-all-accounts-data'),
+
+  // Custom skins
+  getCustomSkins: () => ipcRenderer.invoke('get-custom-skins'),
+  importCustomSkin: (skin) => ipcRenderer.invoke('import-custom-skin', skin),
+  deleteCustomSkin: (id) => ipcRenderer.invoke('delete-custom-skin', id)
 });

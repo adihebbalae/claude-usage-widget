@@ -1199,6 +1199,94 @@ body.theme-light .settings-disclaimer {
     border-top: 1px solid var(--skin-hairline);
 }
 
+/* ── Custom skin import ──────────────────────────────────────────────────── */
+.skin-import {
+    width: 100%;
+}
+
+.skin-import-toggle-btn,
+.skin-import-submit-btn,
+.skin-import-cancel-btn {
+    background: var(--skin-fill);
+    border: 1px solid var(--skin-border);
+    color: var(--skin-text-dim);
+    font-size: 10px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.skin-import-toggle-btn:hover,
+.skin-import-cancel-btn:hover {
+    color: var(--skin-text);
+    border-color: var(--skin-border-hover);
+}
+
+.skin-import-submit-btn {
+    background: var(--skin-accent-bg);
+    border-color: var(--skin-accent-border);
+    color: var(--skin-accent-text);
+}
+
+.skin-import-submit-btn:hover {
+    box-shadow: 0 0 8px var(--skin-accent-bg);
+}
+
+.skin-import-form {
+    margin-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.skin-import-textarea {
+    width: 100%;
+    resize: vertical;
+    min-height: 64px;
+    background: var(--skin-fill);
+    border: 1px solid var(--skin-border);
+    color: var(--skin-text);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 10px;
+    padding: 6px 8px;
+    border-radius: 6px;
+}
+
+.skin-import-textarea:focus {
+    border-color: var(--skin-accent-border);
+}
+
+.skin-import-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.skin-import-error {
+    color: #ff7a7a;
+    font-size: 10px;
+    line-height: 1.3;
+    min-height: 0;
+}
+
+.skin-import-error:empty {
+    display: none;
+}
+
+.skin-preview-custom-delete {
+    background: transparent;
+    border: none;
+    color: var(--skin-text-faint);
+    cursor: pointer;
+    font-size: 11px;
+    padding: 0 2px;
+    line-height: 1;
+}
+
+.skin-preview-custom-delete:hover {
+    color: #ff7a7a;
+}
+
 .skin-btn {
     display: flex;
     align-items: center;

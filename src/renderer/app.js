@@ -81,7 +81,18 @@ const elements = {
     warnThreshold: document.getElementById('warnThreshold'),
     dangerThreshold: document.getElementById('dangerThreshold'),
     themeBtns: document.querySelectorAll('.theme-btn'),
-    skinBtns: document.querySelectorAll('.skin-btn'),
+    skinSelector: document.getElementById('skinSelector'),
+    skinBrowseAllBtn: document.getElementById('skinBrowseAllBtn'),
+    skinPopupOverlay: document.getElementById('skinPopupOverlay'),
+    skinPopupCloseBtn: document.getElementById('skinPopupCloseBtn'),
+    skinSelectorFull: document.getElementById('skinSelectorFull'),
+    skinCopyPromptBtn: document.getElementById('skinCopyPromptBtn'),
+    skinImportToggleBtn: document.getElementById('skinImportToggleBtn'),
+    skinImportForm: document.getElementById('skinImportForm'),
+    skinImportInput: document.getElementById('skinImportInput'),
+    skinImportSubmitBtn: document.getElementById('skinImportSubmitBtn'),
+    skinImportCancelBtn: document.getElementById('skinImportCancelBtn'),
+    skinImportError: document.getElementById('skinImportError'),
     timeFormat: document.getElementById('timeFormat'),
     weeklyDateFormat: document.getElementById('weeklyDateFormat'),
     refreshInterval: document.getElementById('refreshInterval'),
@@ -390,7 +401,12 @@ async function init() {
     const settings = await window.electronAPI.getSettings();
     window._cachedSettings = settings;
     applyTheme(settings.theme);
-    window.SkinManager.applySkin(settings.skin || 'none');
+    try {
+        window.SkinManager.setCustomSkins(await window.electronAPI.getCustomSkins());
+    } catch (e) {
+        debugLog('Failed to load custom skins', e);
+    }
+    renderSkinGallery(settings.skin || 'none');
     applyGlassLevel(settings.glassLevel);
     if (window.electronAPI.platform === 'darwin') {
         document.getElementById('trayLabel').textContent = 'Hide from Dock';
@@ -580,15 +596,109 @@ function setupEventListeners() {
         });
     });
 
-    // Skin buttons
-    elements.skinBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-            elements.skinBtns.forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            window.SkinManager.applySkin(btn.dataset.skin);
+    // Skin gallery — buttons are rendered dynamically (built-ins + custom
+    // imports) into both the featured row and the full-gallery popup, so
+    // clicks on either are handled the same way via delegation.
+    function wireSkinSelectorClicks(container) {
+        if (!container) return;
+        container.addEventListener('click', async (e) => {
+            const deleteBtn = e.target.closest('.skin-preview-custom-delete');
+            if (deleteBtn) {
+                e.stopPropagation();
+                const id = deleteBtn.dataset.skinId;
+                const wasActive = window.SkinManager.getActiveSkin() === id;
+                await window.electronAPI.deleteCustomSkin(id);
+                window.SkinManager.setCustomSkins(await window.electronAPI.getCustomSkins());
+                renderSkinGallery(wasActive ? 'none' : window.SkinManager.getActiveSkin());
+                if (wasActive) await saveSettings();
+                return;
+            }
+            const btn = e.target.closest('.skin-btn');
+            if (!btn) return;
+            renderSkinGallery(btn.dataset.skin);
             syncGlassRow();
         });
+    }
+    wireSkinSelectorClicks(elements.skinSelector);
+    wireSkinSelectorClicks(elements.skinSelectorFull);
+
+    // "Browse all skins…" popup — a plain in-DOM overlay (never resizes the
+    // window). Closed via Done, Escape, or a click on the dimmed backdrop.
+    function openSkinPopup() {
+        if (!elements.skinPopupOverlay) return;
+        elements.skinPopupOverlay.style.display = '';
+    }
+    function closeSkinPopup() {
+        if (!elements.skinPopupOverlay) return;
+        elements.skinPopupOverlay.style.display = 'none';
+    }
+    if (elements.skinBrowseAllBtn) {
+        elements.skinBrowseAllBtn.addEventListener('click', openSkinPopup);
+    }
+    if (elements.skinPopupCloseBtn) {
+        elements.skinPopupCloseBtn.addEventListener('click', closeSkinPopup);
+    }
+    if (elements.skinPopupOverlay) {
+        elements.skinPopupOverlay.addEventListener('click', (e) => {
+            if (e.target === elements.skinPopupOverlay) closeSkinPopup();
+        });
+    }
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && elements.skinPopupOverlay && elements.skinPopupOverlay.style.display !== 'none') {
+            closeSkinPopup();
+        }
     });
+
+    // "Copy AI prompt" — copies the full CREATING_A_SKIN.md doc (the single
+    // source of truth, baked in at build time by scripts/validate-skins.js
+    // since this app's CSP blocks fetching it at runtime) so it can be pasted
+    // straight into a Claude Code session.
+    if (elements.skinCopyPromptBtn) {
+        elements.skinCopyPromptBtn.addEventListener('click', async () => {
+            const doc = window.SKIN_AI_PROMPT_DOC || '';
+            const btn = elements.skinCopyPromptBtn;
+            const original = btn.textContent;
+            try {
+                await navigator.clipboard.writeText(doc);
+                btn.textContent = 'Copied!';
+            } catch (err) {
+                btn.textContent = 'Copy failed';
+            }
+            setTimeout(() => { btn.textContent = original; }, 1500);
+        });
+    }
+
+    // Custom skin import (paste skin.json — see skins/CREATING_A_SKIN.md)
+    if (elements.skinImportToggleBtn) {
+        elements.skinImportToggleBtn.addEventListener('click', () => {
+            const showing = elements.skinImportForm.style.display !== 'none';
+            elements.skinImportForm.style.display = showing ? 'none' : '';
+            if (!showing) elements.skinImportInput.focus();
+        });
+        elements.skinImportCancelBtn.addEventListener('click', () => {
+            elements.skinImportForm.style.display = 'none';
+            elements.skinImportInput.value = '';
+            elements.skinImportError.textContent = '';
+        });
+        elements.skinImportSubmitBtn.addEventListener('click', async () => {
+            elements.skinImportError.textContent = '';
+            const raw = elements.skinImportInput.value.trim();
+            if (!raw) {
+                elements.skinImportError.textContent = 'Paste a skin.json first.';
+                return;
+            }
+            const result = await window.electronAPI.importCustomSkin(raw);
+            if (!result.success) {
+                elements.skinImportError.textContent = result.error || 'Could not import that skin.';
+                return;
+            }
+            window.SkinManager.setCustomSkins(await window.electronAPI.getCustomSkins());
+            renderSkinGallery(result.skin.id);
+            await saveSettings();
+            elements.skinImportInput.value = '';
+            elements.skinImportForm.style.display = 'none';
+        });
+    }
 
     const _glSelect = document.getElementById('glassLevel');
     if (_glSelect) {
@@ -1886,9 +1996,12 @@ async function loadSettings() {
         btn.classList.toggle('active', btn.dataset.theme === settings.theme);
     });
 
-    elements.skinBtns.forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.skin === (settings.skin || 'none'));
-    });
+    try {
+        window.SkinManager.setCustomSkins(await window.electronAPI.getCustomSkins());
+    } catch (e) {
+        debugLog('Failed to load custom skins', e);
+    }
+    renderSkinGallery(settings.skin || 'none');
 
     const _gl = document.getElementById('glassLevel');
     if (_gl) _gl.value = settings.glassLevel || 'medium';
@@ -1896,7 +2009,6 @@ async function loadSettings() {
     syncGlassRow();
 
     applyTheme(settings.theme);
-    window.SkinManager.applySkin(settings.skin || 'none');
     if (window.electronAPI.platform === 'darwin') {
         document.getElementById('trayLabel').textContent = 'Hide from Dock';
     }
@@ -1955,6 +2067,75 @@ async function saveSettings() {
     }
     // Restart auto-update with new interval if it changed
     startAutoUpdate();
+}
+
+// Skins always shown inline in Settings, before "Browse all…" — kept short
+// on purpose so the row doesn't have to list all 10+ skins. The currently
+// active skin is always added too (below) if it isn't already one of these,
+// so switching to something from the popup never makes it "disappear".
+const FEATURED_SKIN_IDS = ['none', 'liquid', 'midnight-oled'];
+
+// Renders one skin gallery (a list of .skin-btn elements) into `container`.
+// Buttons carry the same .skin-btn/data-skin/.active contract the rest of
+// the settings code (saveSettings, syncGlassRow) already expects, so nothing
+// downstream needs to know which container — or how many skins — it's from.
+function renderSkinButtons(container, skins, activeId) {
+    if (!container) return;
+    container.innerHTML = '';
+
+    for (const skin of skins) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'skin-btn' + (skin.id === activeId ? ' active' : '');
+        btn.dataset.skin = skin.id;
+        btn.title = skin.description || skin.name;
+
+        const preview = document.createElement('span');
+        preview.className = 'skin-preview';
+        if (skin.id === 'none') {
+            preview.classList.add('skin-preview-none');
+        } else if (skin.id === 'liquid') {
+            preview.classList.add('skin-preview-liquid');
+        } else if (skin.tokens && skin.tokens['--skin-bg']) {
+            preview.style.background = skin.tokens['--skin-bg'];
+        }
+        btn.appendChild(preview);
+
+        const label = document.createElement('span');
+        label.className = 'skin-label';
+        label.textContent = skin.name;
+        btn.appendChild(label);
+
+        if (!skin.builtin) {
+            const del = document.createElement('button');
+            del.type = 'button';
+            del.className = 'skin-preview-custom-delete';
+            del.dataset.skinId = skin.id;
+            del.title = `Remove "${skin.name}"`;
+            del.textContent = '×';
+            btn.appendChild(del);
+        }
+
+        container.appendChild(btn);
+    }
+}
+
+// Rebuilds both the featured row and the full-gallery popup (None + built-in
+// presets + user-imported custom skins), and applies `activeId`.
+function renderSkinGallery(activeId) {
+    const allSkins = window.SkinManager.getAllSkins();
+
+    const featured = FEATURED_SKIN_IDS
+        .map(id => allSkins.find(s => s.id === id))
+        .filter(Boolean);
+    if (!featured.some(s => s.id === activeId)) {
+        const activeSkin = allSkins.find(s => s.id === activeId);
+        if (activeSkin) featured.push(activeSkin);
+    }
+    renderSkinButtons(elements.skinSelector, featured, activeId);
+    renderSkinButtons(elements.skinSelectorFull, allSkins, activeId);
+
+    window.SkinManager.applySkin(activeId);
 }
 
 function applyTheme(theme) {
