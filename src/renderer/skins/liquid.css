@@ -20,6 +20,17 @@
 
    Everything is driven by the --lg-* custom properties below, so the dark and
    light themes share one set of structural rules and only swap the palette.
+
+   RELATIONSHIP TO THE STANDARDIZED --skin-* CONTRACT (see presets/liquid.json
+   and skins/CREATING_A_SKIN.md): Liquid is registered like any other preset,
+   with a `tokens` block mapping its palette onto the shared --skin-* names —
+   the skin registry applies those to <body> for every skin, built-in or
+   custom, so base (non-glass) chrome still resolves sensibly. This file's own
+   --lg-* selectors are higher-specificity and win for anything Liquid
+   explicitly restyles (the aurora, frost veil, rim); --lg-* stays a separate,
+   literal palette here rather than `var(--skin-*, ...)` indirection so this
+   already-tuned effect layer doesn't shift if the shared contract's defaults
+   ever change.
    ========================================================================== */
 
 /* ── Palette: DARK (default) ─────────────────────────────────────────────── */
@@ -186,6 +197,15 @@ body[data-skin="liquid"] .widget-container > * {
 body[data-skin="liquid"] .settings-overlay {
   position: absolute !important;
   inset: 0 !important;
+}
+
+/* Skin popup sits above .settings-overlay (z-index 30) — same reassertion,
+   needed because body[data-skin="liquid"] .widget-container > * forces
+   position:relative on every direct child, this overlay included. */
+body[data-skin="liquid"] .skin-popup-overlay {
+  position: absolute !important;
+  inset: 0 !important;
+  z-index: 40 !important;
 }
 
 @keyframes lg-drift {

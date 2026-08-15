@@ -46,9 +46,16 @@ RELEASE_NOTES_DRAFT.md
 CLAUDE.md
 GITHUB_RELEASE_DESCRIPTION.txt
 test-version.js
+OPEN_SOURCE_CONTRIBUTIONS.md
 
 # Test artifacts
 test-*.png
+
+# Generated skin bundle — regenerated from src/renderer/skins/presets/*.json
+# and CREATING_A_SKIN.md by scripts/validate-skins.js before every entry
+# point (predev/prestart/prebuild*), so it never needs to be committed and
+# would only add merge-conflict-prone diff noise if it were.
+src/renderer/skins/presets/presets.generated.js
 
 # Code signing credentials (NEVER COMMIT THESE)
 developer_id.key
